@@ -8,6 +8,7 @@ SiCK (Suspicious Image Collection Kit) is a Python tool designed for web scrapin
 
 ## Features
 - Image downloading from given URLs.
+- Generates a hash of the image.
 - Optical Character Recognition (OCR) using pytesseract.
 - EXIF data extraction from images.
 - Face detection in images.
