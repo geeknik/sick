@@ -1,0 +1,8 @@
+colorthief
+beautifulsoup4
+Pillow
+pytesseract
+numpy
+requests
+python-magic
+opencv-python
