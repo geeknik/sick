@@ -30,6 +30,9 @@ python sick.py -d [DEPTH] [URL]
 - `DEPTH`: Depth for web crawling.
 - `URL`: The URL to start crawling.
 
+
+![image](https://github.com/geeknik/sick/assets/466878/e14ac9bd-3b21-4b75-b10d-0cac297241f4)
+
 ## Dependencies
 * BeautifulSoup
 * PIL
