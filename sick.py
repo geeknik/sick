@@ -9,6 +9,7 @@ import tempfile
 import requests
 import argparse
 import hashlib
+import nudepy
 import magic
 import cv2
 import os
@@ -50,6 +51,15 @@ def detect_faces(pil_image):
     face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
     faces = face_cascade.detectMultiScale(gray_image, 1.1, 4)
     return len(faces) > 0
+
+def is_nude(image_path):
+    # Check if the image contains nudity
+    try:
+        result = nudepy.is_nude(image_path)
+        return result
+    except Exception as e:
+        print(f"Error during nudity detection in image: {image_path}. Error: {e}")
+        return False
 
 def download_image(url):
     try:
@@ -97,13 +107,16 @@ def crawl(url, depth):
                     try:
                         with Image.open(image_path) as img_obj:
                             # Process the downloaded image further as needed
+                            # Nudity detection logic
+                            nudity_detected = is_nude(image_path) if real_mime_type != 'image/gif' else 'N/A'
                             image_hash = get_image_hash(img_obj)
                             exif_data = extract_exif_data(img_obj)
                             text = extract_text_from_image(img_obj)
                             dominant_color = get_dominant_color(image_path) if real_mime_type != 'image/gif' else 'N/A'
                             faces_detected = detect_faces(img_obj) if real_mime_type != 'image/gif' else 'N/A'
+                            is
                             # Add your own processing: storage, logging, etc.
-                            print(f"Image URL: {image_url}, Hash: {image_hash}, Dominant Color: {dominant_color}, Faces Detected: {faces_detected}")
+                            print(f"Image URL: {image_url}, Hash: {image_hash}, Dominant Color: {dominant_color}, Faces Detected: {faces_detected}, Nudity Detected: {nudity_detected})
                     except (Image.UnidentifiedImageError, OSError) as e:
                         print(f"Cannot process image at {image_url}: {e}")
                     finally:
