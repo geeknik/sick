@@ -6,6 +6,6 @@ opencv-python-headless==4.5.1.48
 Pillow==8.1.0
 pytesseract==0.3.7
 python-magic==0.4.22
-requests==2.25.1
+requests==2.31.0
 rich==9.13.0
 tensorflow==2.4.1
