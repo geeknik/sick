@@ -19,22 +19,13 @@ import json
 import cv2
 import os
 
-# Global instance of Console
+# Intialize Globals
 console = Console()
-
-# Initialize the UserAgent object
 user_agent = UserAgent()
-
-# Example on how to get a random user-agent string
-random_user_agent = user_agent.random
-
-# Other examples:
-# user_agent.chrome  # For a random Chrome UA string
-# user_agent.firefox  # For a random Firefox UA string
-# user_agent.safari  # For a random Safari UA string
-
-# Initialize the nude detector (preferably outside of the is_nude function so it's only loaded once)
 nude_detector = NudeDetector()
+
+# Example on how to get a random user-agent string, can substitute user_agent.chrome; user_agent.firefox; user_agent.safari
+random_user_agent = user_agent.random
 
 def detect_nudity(image_path):
     try:
@@ -91,6 +82,7 @@ def detect_faces(pil_image):
     return len(faces) > 0
 
 def download_image(url):
+    # Download images with random user agent
     try:
         headers = {'User-Agent': user_agent.random}
         response = requests.get(url, timeout=10, headers=headers)
@@ -112,6 +104,7 @@ def download_image(url):
         return None
 
 def get_dominant_color(image_path):
+    # Identify the domminant color in the image
     try:
         color_thief = ColorThief(image_path)
         dominant_color = color_thief.get_color(quality=1)
@@ -121,6 +114,7 @@ def get_dominant_color(image_path):
     return None
 
 def crawl(url, depth, verbose):
+    # Crawling the website
     if depth <= 0:
         return
     try:
@@ -133,6 +127,7 @@ def crawl(url, depth, verbose):
             if image_path:
                 real_mime_type = magic.from_file(image_path, mime=True)
                 if real_mime_type.startswith('image/'):
+                    # Create a fancy table for console log
                     try:
                         table = Table(show_header=True, header_style="bold magenta")
                         table.add_column("Image URL", no_wrap=True)
