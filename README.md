@@ -7,42 +7,40 @@
 SiCK (Suspicious Image Collection Kit) is a Python tool designed for web scraping and analyzing images for suspicious content. It automates the process of downloading images, extracting text (OCR), reading EXIF data, detecting faces, and identifying dominant colors.
 
 ## Features
-- Image downloading from given URLs.
-- Generates a hash of the image.
-- Optical Character Recognition (OCR) using pytesseract.
-- EXIF data extraction from images.
-- Face detection in images.
-- Determining the dominant color of images.
+- Crawls a user-defined URL & depth
+- Image Hash Generation
+- OCR text extraction with pytesseract
+- EXIF data extraction
+- Face detection
+- Nudity detection with NudeNet
+- Determines dominant color
 
 ## Installation
-To install SiCK, clone the repository and install the required dependencies:
+**Step 1: Install Python 3.8**
+If you don't have Python 3.8 installed, you need to install it first. You can download it from the [official Python website](https://www.python.org/downloads/release/python-380/) or use a version manager like `pyenv`.
+
+**Step 2: Clone the repo**
+To continue installing SiCK, clone the repository and install the required dependencies:
 ```bash
 git clone https://github.com/geeknik/sick
 cd sick
+python3.8 -m venv env
+source env/bin/activate
 pip install -r requirements.txt
 ```
 
 ## Usage
 Run SiCK using the following command:
 ```bash
-python sick.py -d [DEPTH] [URL]
+python sick.py -d [DEPTH] [URL] (-v)
 ```
-- `DEPTH`: Depth for web crawling.
-- `URL`: The URL to start crawling.
+- `DEPTH`: Depth for web crawling. (required)
+- `URL`: The URL to start crawling. (required)
+- `VERBOSE`: enable error messages (optional)
 
 
 ![image](https://github.com/geeknik/sick/assets/466878/e14ac9bd-3b21-4b75-b10d-0cac297241f4)
 
-## Dependencies
-* BeautifulSoup
-* PIL
-* pytesseract
-* numpy
-* requests
-* argparse
-* hashlib
-* magic
-* cv2
 
 ## Contributing
 
@@ -59,4 +57,8 @@ For support or other queries, contact [geeknik](https://x.com/geeknik) on X.
 ## Acknowledgments
 
 Thanks to all the contributors and supporters of the SiCK project:
-* that one guy who did that one thing that one time
+* that one guy who did this one thing that one time
+* those other two guys who will always remain nameless
+* the faceless shadow outside my window
+* the heavy breathing and clicking on phone
+* hi!~
