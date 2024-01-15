@@ -2,8 +2,11 @@ from fake_useragent import UserAgent
 from colorthief import ColorThief
 from nudenet import NudeDetector
 from urllib.parse import urljoin
+from rich.console import Console
 from bs4 import BeautifulSoup
+from rich.table import Table
 from PIL import ExifTags
+from rich import print
 from PIL import Image
 import pytesseract
 import numpy as np
@@ -15,6 +18,9 @@ import magic
 import json
 import cv2
 import os
+
+# Global instance of Console
+console = Console()
 
 # Initialize the UserAgent object
 user_agent = UserAgent()
@@ -114,7 +120,7 @@ def get_dominant_color(image_path):
         print(f"Error getting dominant color. It may not be possible to determine dominant color for a 1x1 or overly simplistic image: {image_path}. Error: {e}")
     return None
 
-def crawl(url, depth):
+def crawl(url, depth, verbose):
     if depth <= 0:
         return
     try:
@@ -128,6 +134,12 @@ def crawl(url, depth):
                 real_mime_type = magic.from_file(image_path, mime=True)
                 if real_mime_type.startswith('image/'):
                     try:
+                        table = Table(show_header=True, header_style="bold magenta")
+                        table.add_column("Image URL", no_wrap=True)
+                        table.add_column("Hash")
+                        table.add_column("Dominant Color")
+                        table.add_column("Faces Detected")
+                        table.add_column("Nudity", no_wrap=True)
                         with Image.open(image_path) as img_obj:
                             image_hash = get_image_hash(img_obj)
                             exif_data = extract_exif_data(img_obj)
@@ -135,18 +147,23 @@ def crawl(url, depth):
                             dominant_color = get_dominant_color(image_path) if real_mime_type != 'image/gif' else 'N/A'
                             faces_detected = detect_faces(img_obj) if real_mime_type != 'image/gif' else 'N/A'
                             nudity_detections = detect_nudity(image_path)
-                            
                             # Output the details including nudity detection results
-                            print(f"Image URL: {image_url}, Hash: {image_hash}, Dominant Color: {dominant_color}, "
-                                  f"Faces Detected: {faces_detected}, Nudity Detections: {json.dumps(nudity_detections)}")
+                            table.add_row(
+                              image_url,
+                              image_hash,
+                              str(dominant_color),
+                              "Yes" if faces_detected else "No",
+                              json.dumps(nudity_detections)
+                            )
+                        console.print(table)
                     except (Image.UnidentifiedImageError, OSError) as e:
-                        print(f"Cannot process image at {image_url}: {e}")
+                        if verbose:
+                            console.print(f"Cannot process image at {image_url}: {e}")
                     finally:
                         os.remove(image_path)  # Clean up temp image file
                 else:
                     print(f"Unsupported image MIME type {real_mime_type} at URL {image_url}")
                     os.remove(image_path)
-                
         for link in soup.select('a[href]'):
             next_url = urljoin(url, link['href'])
             crawl(next_url, depth - 1)
@@ -157,8 +174,10 @@ def main():
     parser = argparse.ArgumentParser(description="Suspicious Image Collection Kit -- SiCK v0.14")
     parser.add_argument("url", help="The URL to start crawling")
     parser.add_argument("-d", "--depth", type=int, default=1, help="Depth of crawling")
+    parser.add_argument("-v", "--verbose", action='store_true', help="Increase output verbosity (show errors)")
     args = parser.parse_args()
-    crawl(args.url, args.depth)
+
+    crawl(args.url, args.depth, args.verbose)
 
 if __name__ == "__main__":
     main()
