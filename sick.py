@@ -24,8 +24,8 @@ console = Console()
 user_agent = UserAgent()
 nude_detector = NudeDetector()
 
-# Example on how to get a random user-agent string, can substitute user_agent.chrome; user_agent.firefox; user_agent.safari
-random_user_agent = user_agent.random
+# Example on how to get a random user-agent string
+random_user_agent = user_agent.random # can substitute user_agent.chrome; user_agent.firefox; user_agent.safari
 
 def detect_nudity(image_path):
     try:
