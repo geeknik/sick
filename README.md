@@ -4,7 +4,7 @@
 
 
 ## Introduction
-SiCK (Suspicious Image Collection Kit) is a Python tool designed for web scraping and analyzing images for suspicious content. It automates the process of downloading images, extracting text (OCR), reading EXIF data, detecting faces, and identifying dominant colors.
+SiCK (Suspicious Image Collection Kit) is a Python tool designed for analyzing images scraped from the web for suspicious content. It automates the process of downloading images, extracting text (OCR), reading EXIF data, detecting faces & nudity, and identifying dominant colors.
 
 ## Features
 - Crawls a user-defined URL & depth
@@ -39,7 +39,7 @@ python sick.py -d [DEPTH] [URL] (-v)
 - `VERBOSE`: enable error messages (optional)
 
 
-![image](https://github.com/geeknik/sick/assets/466878/e14ac9bd-3b21-4b75-b10d-0cac297241f4)
+![image](https://github.com/geeknik/sick/assets/466878/4ce576b5-a914-4baf-abba-ff959c89f316)
 
 
 ## Contributing
