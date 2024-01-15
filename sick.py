@@ -1,4 +1,6 @@
+from fake_useragent import UserAgent
 from colorthief import ColorThief
+from nudenet import NudeDetector
 from urllib.parse import urljoin
 from bs4 import BeautifulSoup
 from PIL import ExifTags
@@ -9,10 +11,40 @@ import tempfile
 import requests
 import argparse
 import hashlib
-import nudepy
 import magic
+import json
 import cv2
 import os
+
+# Initialize the UserAgent object
+user_agent = UserAgent()
+
+# Example on how to get a random user-agent string
+random_user_agent = user_agent.random
+
+# Other examples:
+# user_agent.chrome  # For a random Chrome UA string
+# user_agent.firefox  # For a random Firefox UA string
+# user_agent.safari  # For a random Safari UA string
+
+# Initialize the nude detector (preferably outside of the is_nude function so it's only loaded once)
+nude_detector = NudeDetector()
+
+def detect_nudity(image_path):
+    try:
+        detections = nude_detector.detect(image_path)
+        nudity_related_classes = {
+            'EXPOSED_ANUS', 'EXPOSED_BUTTOCKS', 'EXPOSED_BREAST',
+            'EXPOSED_GENITALIA', 'MALE_GENITALIA_EXPOSED', 'FEMALE_GENITALIA_EXPOSED'
+        }
+        nudity_detections = [
+            detection for detection in detections
+            if detection.get('class') in nudity_related_classes and detection.get('score', 0) >= 0.5
+        ]
+        return nudity_detections
+    except Exception as e:
+        print(f"Error during nudity detection in image: {image_path}. Error: {e}")
+        return []
 
 def get_image_hash(pil_image):
     # Generate a hash for an image
@@ -52,21 +84,12 @@ def detect_faces(pil_image):
     faces = face_cascade.detectMultiScale(gray_image, 1.1, 4)
     return len(faces) > 0
 
-def is_nude(image_path):
-    # Check if the image contains nudity
-    try:
-        result = nudepy.is_nude(image_path)
-        return result
-    except Exception as e:
-        print(f"Error during nudity detection in image: {image_path}. Error: {e}")
-        return False
-
 def download_image(url):
     try:
-        headers = {'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)'}
+        headers = {'User-Agent': user_agent.random}
         response = requests.get(url, timeout=10, headers=headers)
         response.raise_for_status()
-        with tempfile.NamedTemporaryFile(delete=False) as f:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".tmp") as f:
             f.write(response.content)
             f.flush()  # Ensure all data is written to disk
             real_mime_type = magic.from_file(f.name, mime=True)
@@ -106,17 +129,16 @@ def crawl(url, depth):
                 if real_mime_type.startswith('image/'):
                     try:
                         with Image.open(image_path) as img_obj:
-                            # Process the downloaded image further as needed
-                            # Nudity detection logic
-                            nudity_detected = is_nude(image_path) if real_mime_type != 'image/gif' else 'N/A'
                             image_hash = get_image_hash(img_obj)
                             exif_data = extract_exif_data(img_obj)
                             text = extract_text_from_image(img_obj)
                             dominant_color = get_dominant_color(image_path) if real_mime_type != 'image/gif' else 'N/A'
                             faces_detected = detect_faces(img_obj) if real_mime_type != 'image/gif' else 'N/A'
-                            is
-                            # Add your own processing: storage, logging, etc.
-                            print(f"Image URL: {image_url}, Hash: {image_hash}, Dominant Color: {dominant_color}, Faces Detected: {faces_detected}, Nudity Detected: {nudity_detected})
+                            nudity_detections = detect_nudity(image_path)
+                            
+                            # Output the details including nudity detection results
+                            print(f"Image URL: {image_url}, Hash: {image_hash}, Dominant Color: {dominant_color}, "
+                                  f"Faces Detected: {faces_detected}, Nudity Detections: {json.dumps(nudity_detections)}")
                     except (Image.UnidentifiedImageError, OSError) as e:
                         print(f"Cannot process image at {image_url}: {e}")
                     finally:
@@ -124,6 +146,7 @@ def crawl(url, depth):
                 else:
                     print(f"Unsupported image MIME type {real_mime_type} at URL {image_url}")
                     os.remove(image_path)
+                
         for link in soup.select('a[href]'):
             next_url = urljoin(url, link['href'])
             crawl(next_url, depth - 1)
@@ -131,7 +154,7 @@ def crawl(url, depth):
         print(f"Error crawling {url}: {e}")
 
 def main():
-    parser = argparse.ArgumentParser(description="Suspicious Image Collection Kit -- SiCK v1.3")
+    parser = argparse.ArgumentParser(description="Suspicious Image Collection Kit -- SiCK v0.14")
     parser.add_argument("url", help="The URL to start crawling")
     parser.add_argument("-d", "--depth", type=int, default=1, help="Depth of crawling")
     args = parser.parse_args()
