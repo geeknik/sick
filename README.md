@@ -11,7 +11,7 @@ SiCK (Suspicious Image Collection Kit) is a Python tool designed for analyzing i
 - Image Hash Generation
 - OCR text extraction with pytesseract
 - EXIF data extraction
-- Face detection
+- Face detection with OpenCV
 - Nudity detection with NudeNet
 - Determines dominant color
 
