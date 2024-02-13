@@ -113,6 +113,26 @@ def get_dominant_color(image_path):
         print(f"Error getting dominant color. It may not be possible to determine dominant color for a 1x1 or overly simplistic image: {image_path}. Error: {e}")
     return None
 
+def detect_steganography(image_path):
+    try:
+        img = Image.open(image_path)
+        np_img = np.array(img)
+        # Flatten the image array and take the LSB of each pixel value
+        lsb_array = np.bitwise_and(np_img.flatten(), 1)
+        # Measure the randomness in the LSBs, here using a simple variance measure
+        # High variance might indicate the presence of hidden data
+        variance = np.var(lsb_array)
+        # You might need to adjust the threshold based on experimentation
+        threshold = 0.25
+        if variance > threshold:
+            return True, variance
+        else:
+            return False, variance
+    except Exception as e:
+        print(f"Error during steganography detection in image: {image_path}. Error: {e}")
+        return False, None
+
+
 def crawl(url, depth, verbose):
     # Crawling the website
     if depth <= 0:
@@ -136,7 +156,9 @@ def crawl(url, depth, verbose):
                         table.add_column("Dominant Color", style="green")
                         table.add_column("Faces Detected", style="bright_white")
                         table.add_column("Nudity Assessment", style="red", no_wrap=True)
-
+                        # Compile and display the processed information in the table
+                        table.add_column("Steganography Detected", style="bright_white")
+                        
                         # Process the image
                         with Image.open(image_path) as img_obj:
                             image_hash = get_image_hash(img_obj)
@@ -145,14 +167,16 @@ def crawl(url, depth, verbose):
                             dominant_color = get_dominant_color(image_path) if real_mime_type != 'image/gif' else 'N/A'
                             faces_found = detect_faces(img_obj) if real_mime_type != 'image/gif' else 'N/A'
                             nudity_results = detect_nudity(image_path)
-
-                            # Compile and display the processed information in the table
+                            stego_detected, variance = detect_steganography(image_path)
+ 
+                            # When adding a row to the table, include the steganography detection result:
                             table.add_row(
                                 image_url,
                                 image_hash,
                                 str(dominant_color),
                                 "Yes" if faces_found else "No",
-                                json.dumps(nudity_results, indent=2)
+                                json.dumps(nudity_results, indent=2),
+                                "Yes (Variance: {:.2f})".format(variance) if stego_detected else "No"
                             )
                         console.print("\nProcessed Image Information:")
                         console.print(table)
