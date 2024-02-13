@@ -127,38 +127,47 @@ def crawl(url, depth, verbose):
             if image_path:
                 real_mime_type = magic.from_file(image_path, mime=True)
                 if real_mime_type.startswith('image/'):
-                    # Create a fancy table for console log
+                    # Generate a visually appealing table for console output
                     try:
+                        # Initialize the table with bold magenta headers
                         table = Table(show_header=True, header_style="bold magenta")
-                        table.add_column("Image URL", no_wrap=True)
-                        table.add_column("Hash")
-                        table.add_column("Dominant Color")
-                        table.add_column("Faces Detected")
-                        table.add_column("Nudity", no_wrap=True)
+                        table.add_column("Image URL", style="cyan", no_wrap=True)
+                        table.add_column("Hash", style="yellow")
+                        table.add_column("Dominant Color", style="green")
+                        table.add_column("Faces Detected", style="bright_white")
+                        table.add_column("Nudity Assessment", style="red", no_wrap=True)
+
+                        # Process the image
                         with Image.open(image_path) as img_obj:
-                            image_hash = get_image_hash(img_obj)
-                            exif_data = extract_exif_data(img_obj)
-                            text = extract_text_from_image(img_obj)
-                            dominant_color = get_dominant_color(image_path) if real_mime_type != 'image/gif' else 'N/A'
-                            faces_detected = detect_faces(img_obj) if real_mime_type != 'image/gif' else 'N/A'
-                            nudity_detections = detect_nudity(image_path)
-                            # Output the details including nudity detection results
+                            image_hash = compute_image_hash(img_obj)
+                            exif_info = extract_exif_info(img_obj)
+                            detected_text = extract_text_from_image(img_obj)
+                            dominant_color = determine_dominant_color(image_path) if real_mime_type != 'image/gif' else 'N/A'
+                            faces_found = detect_faces_in_image(img_obj) if real_mime_type != 'image/gif' else 'N/A'
+                            nudity_results = analyze_nudity(image_path)
+
+                            # Compile and display the processed information in the table
                             table.add_row(
-                              image_url,
-                              image_hash,
-                              str(dominant_color),
-                              "Yes" if faces_detected else "No",
-                              json.dumps(nudity_detections)
+                                image_url,
+                                image_hash,
+                                str(dominant_color),
+                                "Yes" if faces_found else "No",
+                                json.dumps(nudity_results, indent=2)
                             )
+                        console.print("\nProcessed Image Information:")
                         console.print(table)
-                    except (Image.UnidentifiedImageError, OSError) as e:
+                    except (Image.UnidentifiedImageError, OSError) as error:
                         if verbose:
-                            console.print(f"Cannot process image at {image_url}: {e}")
+                            console.print(f"[bold red]Error processing image at {image_url}[/bold red]: {error}", highlight=True)
                     finally:
-                        os.remove(image_path)  # Clean up temp image file
-                else:
-                    print(f"Unsupported image MIME type {real_mime_type} at URL {image_url}")
-                    os.remove(image_path)
+                        # Remove temporary image file after processing
+                        os.remove(image_path)
+
+                    # Handle unsupported image MIME types
+                    else:
+                        console.print(f"[bold red]Unsupported image MIME type {real_mime_type} encountered at URL:[/bold red] {image_url}", highlight=True)
+                        os.remove(image_path)
+
         for link in soup.select('a[href]'):
             next_url = urljoin(url, link['href'])
             crawl(next_url, depth - 1)
