@@ -163,10 +163,10 @@ def crawl(url, depth, verbose):
                         # Remove temporary image file after processing
                         os.remove(image_path)
 
-                    # Handle unsupported image MIME types
-                    else:
-                        console.print(f"[bold red]Unsupported image MIME type {real_mime_type} encountered at URL:[/bold red] {image_url}", highlight=True)
-                        os.remove(image_path)
+                # Handle unsupported image MIME types
+                else:
+                    console.print(f"[bold red]Unsupported image MIME type {real_mime_type} encountered at URL:[/bold red] {image_url}", highlight=True)
+                    os.remove(image_path)
 
         for link in soup.select('a[href]'):
             next_url = urljoin(url, link['href'])
