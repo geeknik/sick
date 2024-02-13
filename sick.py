@@ -139,12 +139,12 @@ def crawl(url, depth, verbose):
 
                         # Process the image
                         with Image.open(image_path) as img_obj:
-                            image_hash = compute_image_hash(img_obj)
-                            exif_info = extract_exif_info(img_obj)
+                            image_hash = get_image_hash(img_obj)
+                            exif_info = extract_exif_data(img_obj)
                             detected_text = extract_text_from_image(img_obj)
-                            dominant_color = determine_dominant_color(image_path) if real_mime_type != 'image/gif' else 'N/A'
-                            faces_found = detect_faces_in_image(img_obj) if real_mime_type != 'image/gif' else 'N/A'
-                            nudity_results = analyze_nudity(image_path)
+                            dominant_color = get_dominant_color(image_path) if real_mime_type != 'image/gif' else 'N/A'
+                            faces_found = detect_faces(img_obj) if real_mime_type != 'image/gif' else 'N/A'
+                            nudity_results = detect_nudity(image_path)
 
                             # Compile and display the processed information in the table
                             table.add_row(
@@ -170,7 +170,7 @@ def crawl(url, depth, verbose):
 
         for link in soup.select('a[href]'):
             next_url = urljoin(url, link['href'])
-            crawl(next_url, depth - 1)
+            crawl(next_url, depth - 1, verbose)
     except requests.RequestException as e:
         print(f"Error crawling {url}: {e}")
 
