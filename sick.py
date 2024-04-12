@@ -261,7 +261,7 @@ def crawl(url, depth, verbose):
         print(f"Error crawling {url}: {e}")
 
 def main():
-    parser = argparse.ArgumentParser(description="Suspicious Image Collection Kit -- SiCK v0.14")
+    parser = argparse.ArgumentParser(description="Suspicious Image Collection Kit -- SiCK v0.20")
     parser.add_argument("url", help="The URL to start crawling")
     parser.add_argument("-d", "--depth", type=int, default=1, help="Depth of crawling")
     parser.add_argument("-v", "--verbose", action='store_true', help="Increase output verbosity (show errors)")
