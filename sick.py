@@ -10,6 +10,7 @@ from rich.console import Console
 from  bs4 import BeautifulSoup
 from rich.table import Table
 from scipy.fft import dctn
+from scipy import stats
 from PIL import Image
 import pytesseract
 import numpy as np
@@ -161,12 +162,12 @@ def detect_steganography(image_path):
         observed_freq = np.bincount(lsb_array, minlength=2)
         expected_freq = np.sum(observed_freq) / 2
         chi_square_stat = np.sum((observed_freq - expected_freq)**2 / expected_freq)
-        chi_square_p_value = 1 - scipy.stats.chi2.cdf(chi_square_stat, 1)
+        chi_square_p_value = 1 - stats.chi2.cdf(chi_square_stat, 1)
 
         # Sample Pair Analysis
         sample_pairs = np.column_stack((lsb_array[::2], lsb_array[1::2]))
         sp_chi_square_stat = np.sum((np.bincount(sample_pairs.dot([1, 2])) - len(sample_pairs)/4)**2) / (len(sample_pairs)/4)
-        sp_chi_square_p_value = 1 - scipy.stats.chi2.cdf(sp_chi_square_stat, 3)
+        sp_chi_square_p_value = 1 - stats.chi2.cdf(sp_chi_square_stat, 3)
 
         # RS Analysis
         rs_result = rs_analysis(lsb_array)
@@ -175,7 +176,7 @@ def detect_steganography(image_path):
         dct_coeffs = dctn(np_img[:,:,0], norm='ortho')  # Analyze first channel
         dct_lsb = np.bitwise_and(dct_coeffs.flatten(), 1)
         dct_chi_square_stat = np.sum((np.bincount(dct_lsb, minlength=2) - len(dct_lsb)/2)**2) / (len(dct_lsb)/2)
-        dct_chi_square_p_value = 1 - scipy.stats.chi2.cdf(dct_chi_square_stat, 1)
+        dct_chi_square_p_value = 1 - stats.chi2.cdf(dct_chi_square_stat, 1)
 
         # Combine results
         stego_score = (
