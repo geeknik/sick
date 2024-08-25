@@ -26,6 +26,8 @@ import csv
 import os
 import logging
 from pathlib import Path
+from scipy.fft import dctn
+from scipy import stats
 
 # Initialize Globals
 console = Console()
@@ -312,6 +314,7 @@ def display_results(results):
     table.add_column("Faces Detected", style="bright_white")
     table.add_column("Nudity Assessment", style="red", no_wrap=True)
     table.add_column("Steganography Detected", style="bright_white", overflow="fold")
+    table.add_column("Estimated Age", style="bright_blue")
     table.add_column("Estimated Age", style="bright_blue")
     for row in results:
         table.add_row(*row)
