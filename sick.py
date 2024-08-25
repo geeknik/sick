@@ -96,17 +96,23 @@ def extract_exif_data(pil_image):
 
 # Function to detect faces in an image
 def detect_faces(pil_image):
-    cv_image = np.array(pil_image)
-    if len(cv_image.shape) == 2:
-        gray_image = cv_image
-    elif cv_image.shape[2] == 4:
-        cv_image = cv2.cvtColor(cv_image, cv2.COLOR_RGBA2RGB)
-        gray_image = cv2.cvtColor(cv_image, cv2.COLOR_RGB2GRAY)
-    else:
-        gray_image = cv2.cvtColor(cv_image, cv2.COLOR_RGB2GRAY)
-    face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-    faces = face_cascade.detectMultiScale(gray_image, 1.1, 4)
-    return len(faces) > 0
+    try:
+        cv_image = np.array(pil_image)
+        if len(cv_image.shape) == 2:
+            gray_image = cv_image
+        elif len(cv_image.shape) == 3:
+            if cv_image.shape[2] == 4:
+                cv_image = cv2.cvtColor(cv_image, cv2.COLOR_RGBA2RGB)
+            gray_image = cv2.cvtColor(cv_image, cv2.COLOR_RGB2GRAY)
+        else:
+            logger.warning(f"Unexpected image shape: {cv_image.shape}")
+            return False
+        face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+        faces = face_cascade.detectMultiScale(gray_image, 1.1, 4)
+        return len(faces) > 0
+    except Exception as e:
+        logger.error(f"Error in face detection: {e}")
+        return False
 
 # Function to download an image with a random user agent
 def download_image(url):
@@ -125,40 +131,39 @@ def download_image(url):
                 return new_filename
         else:
             headers = {'User-Agent': user_agent.random}
-            response = requests.head(url, headers=headers)  # Check content type first
-
-            if response.status_code == 200:  # Check for successful response
-                content_type = response.headers.get('Content-Type')
-                if content_type and content_type.startswith('image/'):
-                    response = requests.get(url, timeout=10, headers=headers)
-                    response.raise_for_status()
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".tmp") as f:
-                        f.write(response.content)
-                        f.flush()
-                        real_mime_type = magic.from_file(f.name, mime=True)
-                        correct_extension = real_mime_type.split('/')[1].lower()
-                        new_filename = f'{f.name}.{correct_extension}'
-                        os.rename(f.name, new_filename)
-                        return new_filename
-                else:
-                    logger.warning(f"Content at {url} does not appear to be a valid image (missing or invalid Content-Type).")
-                    return None
+            response = requests.get(url, timeout=10, headers=headers, stream=True)
+            response.raise_for_status()
+            content_type = response.headers.get('Content-Type', '').lower()
+            if content_type.startswith('image/'):
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".tmp") as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        f.write(chunk)
+                    f.flush()
+                    real_mime_type = magic.from_file(f.name, mime=True)
+                    correct_extension = real_mime_type.split('/')[1].lower()
+                    new_filename = f'{f.name}.{correct_extension}'
+                    os.rename(f.name, new_filename)
+                    return new_filename
             else:
-                logger.warning(f"Error accessing URL {url}: Status code {response.status_code}")
+                logger.warning(f"Content at {url} does not appear to be a valid image (Content-Type: {content_type}).")
                 return None
-
     except requests.RequestException as e:
-        logger.error(f"Error downloading image: {e}")
-        return None
+        logger.error(f"Error downloading image from {url}: {e}")
+    except Exception as e:
+        logger.error(f"Unexpected error downloading image from {url}: {e}")
+    return None
 
 # Function to get the dominant color of an image
 def get_dominant_color(image_path):
     try:
-        color_thief = ColorThief(image_path)
-        dominant_color = color_thief.get_color(quality=1)
+        with Image.open(image_path) as img:
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
+            color_thief = ColorThief(img)
+            dominant_color = color_thief.get_color(quality=1)
         return dominant_color
     except Exception as e:
-        print(f"Error getting dominant color: {image_path}. Error: {e}")
+        logger.error(f"Error getting dominant color: {image_path}. Error: {e}")
     return None
 
 # Function to detect steganography in an image
