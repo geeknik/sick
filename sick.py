@@ -12,7 +12,7 @@ from  bs4 import BeautifulSoup
 from rich.table import Table
 from scipy.fft import dctn
 from scipy import stats
-from PIL import Image
+from PIL import Image, ImageFilter
 from deepface import DeepFace
 import pytesseract
 import numpy as np
