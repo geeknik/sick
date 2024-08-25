@@ -1,5 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from PIL import ExifTags, UnidentifiedImageError
+from PIL import ExifTags, UnidentifiedImageError, ImageChops
+import imagehash
 from fake_useragent import UserAgent
 from rich.progress import Progress
 from scipy.stats import binomtest
@@ -56,7 +57,7 @@ def detect_nudity(image_path):
     try:
         # Check if the image is a GIF
         if image_path.lower().endswith('.gif'):
-            return ["GIF images are not supported for nudity detection"]
+            return {"result": "GIF images are not supported for nudity detection", "score": 0}
         
         detections = nude_detector.detect(image_path)
         nudity_related_classes = {
@@ -67,10 +68,20 @@ def detect_nudity(image_path):
             detection for detection in detections
             if detection.get('class') in nudity_related_classes and detection.get('score', 0) >= 0.5
         ]
-        return nudity_detections
+        
+        # Calculate overall nudity score
+        if nudity_detections:
+            nudity_score = max(detection.get('score', 0) for detection in nudity_detections)
+        else:
+            nudity_score = 0
+        
+        return {
+            "result": nudity_detections,
+            "score": nudity_score
+        }
     except Exception as e:
         logger.error(f"Error during nudity detection in image: {image_path}. Error: {e}")
-        return []
+        return {"result": [], "score": 0}
 
 # Function to generate a hash for an image
 def get_image_hash(pil_image):
@@ -220,19 +231,25 @@ def detect_steganography(image_path):
             dct_chi_square_stat = np.sum((np.bincount(dct_lsb, minlength=2) - len(dct_lsb)/2)**2) / (len(dct_lsb)/2)
             dct_chi_square_p_value = 1 - stats.chi2.cdf(dct_chi_square_stat, 1)
 
-            # Combine results with adjusted thresholds
+            # Entropy Analysis
+            entropy = stats.entropy(np.bincount(np_img.flatten()))
+            max_entropy = np.log2(256)  # Maximum possible entropy for 8-bit image
+            normalized_entropy = entropy / max_entropy
+
+            # Combine results with adjusted thresholds and weights
             stego_score = (
-                (lsb_variance > 0.3) +  # Increased threshold
-                (chi_square_p_value < 0.01) +  # More stringent p-value
-                (sp_chi_square_p_value < 0.01) +  # More stringent p-value
-                rs_result +
-                (dct_chi_square_p_value < 0.01)  # More stringent p-value
+                0.2 * (lsb_variance > 0.3) +
+                0.2 * (chi_square_p_value < 0.01) +
+                0.2 * (sp_chi_square_p_value < 0.01) +
+                0.2 * rs_result +
+                0.1 * (dct_chi_square_p_value < 0.01) +
+                0.1 * (normalized_entropy > 0.9)  # High entropy might indicate hidden data
             )
 
             # Detect hidden text
             hidden_text = detect_hidden_text(np_img)
 
-            return stego_score >= 3, stego_score, hidden_text  # Consider it suspicious if 3 or more tests indicate steganography
+            return stego_score >= 0.6, stego_score, hidden_text  # Adjusted threshold
 
     except Exception as e:
         logger.error(f"Error during steganography detection in image: {image_path}. Error: {e}")
@@ -270,6 +287,21 @@ def detect_age(image_path):
     except Exception as e:
         logger.error(f"Error during age detection in image: {image_path}. Error: {e}")
         return None
+
+def detect_potential_child_exploitation(image_path, faces_detected):
+    if not faces_detected:
+        return False, None
+    
+    try:
+        age = detect_age(image_path)
+        if age is not None and age < 18:
+            nudity_result = detect_nudity(image_path)
+            if nudity_result['score'] > 0.7:  # High confidence of nudity
+                return True, f"Potential child exploitation detected. Estimated age: {age}, Nudity score: {nudity_result['score']}"
+        return False, None
+    except Exception as e:
+        logger.error(f"Error during child exploitation detection in image: {image_path}. Error: {e}")
+        return False, None
 
 # Function to process an image and extract information
 def process_image(image_path, verbose):
@@ -309,6 +341,8 @@ def process_image(image_path, verbose):
                 age_estimation = 'N/A'
                 frame_count = img_obj.n_frames
                 duration = img_obj.info.get('duration', 'N/A')
+                ai_generated, ai_score = False, None
+                child_exploitation_detected, child_exploitation_details = False, None
             else:
                 logger.info("Processing non-GIF image")
                 dominant_color = get_dominant_color(image_path)
@@ -317,6 +351,8 @@ def process_image(image_path, verbose):
                 age_estimation = detect_age(image_path) if faces_found else 'N/A'
                 frame_count = 'N/A'
                 duration = 'N/A'
+                ai_generated, ai_score = detect_ai_generated(image_path)
+                child_exploitation_detected, child_exploitation_details = detect_potential_child_exploitation(image_path, faces_found)
 
             nudity_results = detect_nudity(image_path)
 
@@ -326,12 +362,15 @@ def process_image(image_path, verbose):
                 image_hash,
                 str(dominant_color),
                 "Yes" if faces_found == True else "No" if faces_found == False else faces_found,
-                json.dumps(nudity_results, indent=2),
-                f"{'Yes' if stego_detected else 'No'} (Score: {stego_score})" if stego_score is not None else "N/A",
+                f"{json.dumps(nudity_results['result'], indent=2)} (Score: {nudity_results['score']:.2f})",
+                f"{'Yes' if stego_detected else 'No'} (Score: {stego_score:.2f})" if stego_score is not None else "N/A",
                 str(age_estimation),
                 hidden_text if hidden_text else "None detected",
                 str(frame_count),
-                str(duration)
+                str(duration),
+                f"{'Yes' if ai_generated else 'No'} (Score: {ai_score:.2f})" if ai_score is not None else "N/A",
+                "Yes" if child_exploitation_detected else "No",
+                child_exploitation_details or "N/A"
             ]
             logger.info(f"Successfully processed image: {image_path}")
             return row
@@ -468,6 +507,9 @@ def display_results(results):
     table.add_column("Hidden Text", style="bright_yellow", overflow="fold")
     table.add_column("Frame Count", style="bright_magenta")
     table.add_column("Duration", style="bright_cyan")
+    table.add_column("AI Generated", style="bright_green")
+    table.add_column("Child Exploitation", style="red")
+    table.add_column("Child Exploitation Details", style="red", overflow="fold")
     for row in results:
         table.add_row(*row)
     console.print("\nProcessed Image Information:")
@@ -484,7 +526,10 @@ def display_results(results):
         "Estimated Age",
         "Hidden Text",
         "Frame Count",
-        "Duration"
+        "Duration",
+        "AI Generated",
+        "Child Exploitation",
+        "Child Exploitation Details"
     ]
     with open("results.csv", "w", newline="", encoding="utf-8") as csvfile:
         writer = csv.writer(csvfile)
