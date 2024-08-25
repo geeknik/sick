@@ -20,6 +20,7 @@ import requests
 import argparse
 import hashlib
 import magic
+from PIL import Image
 import json
 import cv2
 import csv
@@ -163,57 +164,56 @@ def get_dominant_color(image_path):
 # Function to detect steganography in an image
 def detect_steganography(image_path):
     try:
-        img = Image.open(image_path)
+        with Image.open(image_path) as img:
+            # Handle PNG transparency and convert to RGB
+            if img.mode in ('RGBA', 'LA') or (img.mode == 'P' and 'transparency' in img.info):
+                bg = Image.new('RGB', img.size, (255, 255, 255))
+                bg.paste(img, mask=img.split()[3] if img.mode == 'RGBA' else None)
+                img = bg
 
-        # Handle PNG transparency and convert to RGB
-        if img.mode in ('RGBA', 'LA') or (img.mode == 'P' and 'transparency' in img.info):
-            bg = Image.new('RGB', img.size, (255, 255, 255))
-            bg.paste(img, mask=img.split()[3] if img.mode == 'RGBA' else None)
-            img = bg
+            np_img = np.array(img).astype(np.uint8)
 
-        np_img = np.array(img).astype(np.uint8)
+            # Ensure the image is 3D (for RGB channels)
+            if len(np_img.shape) == 2:
+                np_img = np.stack((np_img,) * 3, axis=-1)
 
-        # Ensure the image is 3D (for RGB channels)
-        if len(np_img.shape) == 2:
-            np_img = np.stack((np_img,) * 3, axis=-1)
+            # LSB Analysis
+            lsb_array = np.bitwise_and(np_img.flatten(), 1)
+            lsb_variance = np.var(lsb_array)
 
-        # LSB Analysis
-        lsb_array = np.bitwise_and(np_img.flatten(), 1)
-        lsb_variance = np.var(lsb_array)
+            # Chi-Square Test
+            observed_freq = np.bincount(lsb_array, minlength=2)
+            expected_freq = np.sum(observed_freq) / 2
+            chi_square_stat = np.sum((observed_freq - expected_freq)**2 / expected_freq)
+            chi_square_p_value = 1 - stats.chi2.cdf(chi_square_stat, 1)
 
-        # Chi-Square Test
-        observed_freq = np.bincount(lsb_array, minlength=2)
-        expected_freq = np.sum(observed_freq) / 2
-        chi_square_stat = np.sum((observed_freq - expected_freq)**2 / expected_freq)
-        chi_square_p_value = 1 - stats.chi2.cdf(chi_square_stat, 1)
+            # Sample Pair Analysis
+            sample_pairs = np.column_stack((lsb_array[::2], lsb_array[1::2]))
+            sp_chi_square_stat = np.sum((np.bincount(sample_pairs.dot([1, 2])) - len(sample_pairs)/4)**2) / (len(sample_pairs)/4)
+            sp_chi_square_p_value = 1 - stats.chi2.cdf(sp_chi_square_stat, 3)
 
-        # Sample Pair Analysis
-        sample_pairs = np.column_stack((lsb_array[::2], lsb_array[1::2]))
-        sp_chi_square_stat = np.sum((np.bincount(sample_pairs.dot([1, 2])) - len(sample_pairs)/4)**2) / (len(sample_pairs)/4)
-        sp_chi_square_p_value = 1 - stats.chi2.cdf(sp_chi_square_stat, 3)
+            # RS Analysis
+            rs_result = rs_analysis(lsb_array)
 
-        # RS Analysis
-        rs_result = rs_analysis(lsb_array)
+            # DCT Analysis
+            dct_coeffs = dctn(np_img[:,:,0], norm='ortho')  # Analyze first channel
+            dct_lsb = np.bitwise_and(dct_coeffs.flatten().astype(np.int64), 1)
+            dct_chi_square_stat = np.sum((np.bincount(dct_lsb, minlength=2) - len(dct_lsb)/2)**2) / (len(dct_lsb)/2)
+            dct_chi_square_p_value = 1 - stats.chi2.cdf(dct_chi_square_stat, 1)
 
-        # DCT Analysis
-        dct_coeffs = dctn(np_img[:,:,0], norm='ortho')  # Analyze first channel
-        dct_lsb = np.bitwise_and(dct_coeffs.flatten().astype(np.int64), 1)
-        dct_chi_square_stat = np.sum((np.bincount(dct_lsb, minlength=2) - len(dct_lsb)/2)**2) / (len(dct_lsb)/2)
-        dct_chi_square_p_value = 1 - stats.chi2.cdf(dct_chi_square_stat, 1)
+            # Combine results
+            stego_score = (
+                (lsb_variance > 0.25) +
+                (chi_square_p_value < 0.05) +
+                (sp_chi_square_p_value < 0.05) +
+                rs_result +
+                (dct_chi_square_p_value < 0.05)
+            )
 
-        # Combine results
-        stego_score = (
-            (lsb_variance > 0.25) +
-            (chi_square_p_value < 0.05) +
-            (sp_chi_square_p_value < 0.05) +
-            rs_result +
-            (dct_chi_square_p_value < 0.05)
-        )
+            # Detect hidden text
+            hidden_text = detect_hidden_text(np_img)
 
-        # Detect hidden text
-        hidden_text = detect_hidden_text(np_img)
-
-        return stego_score >= 2, stego_score, hidden_text  # Consider it suspicious if 2 or more tests indicate steganography
+            return stego_score >= 2, stego_score, hidden_text  # Consider it suspicious if 2 or more tests indicate steganography
 
     except Exception as e:
         logger.error(f"Error during steganography detection in image: {image_path}. Error: {e}")
@@ -244,7 +244,7 @@ def detect_hidden_text(np_img):
 
 def detect_age(image_path):
     try:
-        result = DeepFace.analyze(image_path, actions=['age'])
+        result = DeepFace.analyze(image_path, actions=['age'], enforce_detection=False)
         return result[0]['age']
     except Exception as e:
         logger.error(f"Error during age detection in image: {image_path}. Error: {e}")
@@ -274,22 +274,36 @@ def process_image(image_path, verbose):
             image_hash = get_image_hash(img_obj)
             exif_info = extract_exif_data(img_obj)
             detected_text = extract_text_from_image(img_obj)
-            dominant_color = get_dominant_color(image_path) if real_mime_type != 'image/gif' else 'N/A'
-            faces_found = detect_faces(img_obj) if real_mime_type != 'image/gif' else 'N/A'
+            
+            if real_mime_type == 'image/gif':
+                dominant_color = 'N/A'
+                faces_found = 'N/A'
+                stego_detected, stego_score, hidden_text = False, None, None
+                age_estimation = 'N/A'
+                frame_count = img_obj.n_frames
+                duration = img_obj.info.get('duration', 'N/A')
+            else:
+                dominant_color = get_dominant_color(image_path)
+                faces_found = detect_faces(img_obj)
+                stego_detected, stego_score, hidden_text = detect_steganography(image_path)
+                age_estimation = detect_age(image_path) if faces_found else 'N/A'
+                frame_count = 'N/A'
+                duration = 'N/A'
+
             nudity_results = detect_nudity(image_path)
-            stego_detected, stego_score, hidden_text = detect_steganography(image_path) if real_mime_type != 'image/gif' else (False, None, None)
-            age_estimation = detect_age(image_path) if real_mime_type != 'image/gif' and faces_found else 'N/A'
 
             # Create a table row with the extracted information
             row = [
                 original_url or image_path,
                 image_hash,
                 str(dominant_color),
-                "Yes" if faces_found else "No",
+                "Yes" if faces_found == True else "No" if faces_found == False else faces_found,
                 json.dumps(nudity_results, indent=2),
                 f"{'Yes' if stego_detected else 'No'} (Score: {stego_score})" if stego_score is not None else "N/A",
                 str(age_estimation),
-                hidden_text if hidden_text else "None detected"
+                hidden_text if hidden_text else "None detected",
+                str(frame_count),
+                str(duration)
             ]
             return row
     except (UnidentifiedImageError, OSError) as error:
