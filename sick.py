@@ -22,11 +22,17 @@ import json
 import cv2
 import csv
 import os
+import logging
+from pathlib import Path
 
 # Initialize Globals
 console = Console()
 user_agent = UserAgent()
 nude_detector = NudeDetector()
+
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 def rs_analysis(lsb_array):
     lsb_array = lsb_array.astype(np.int64) # Cast to larger data type
@@ -170,38 +176,42 @@ def detect_steganography(image_path):
         return False, None
 
 # Function to process an image and extract information
-def process_image(image_url, verbose):
-    image_path = download_image(image_url)
-    if image_path:
-        real_mime_type = magic.from_file(image_path, mime=True)
-        if real_mime_type.startswith('image/'):
-            try:
-                with Image.open(image_path) as img_obj:
-                    image_hash = get_image_hash(img_obj)
-                    exif_info = extract_exif_data(img_obj)
-                    detected_text = extract_text_from_image(img_obj)
-                    dominant_color = get_dominant_color(image_path) if real_mime_type != 'image/gif' else 'N/A'
-                    faces_found = detect_faces(img_obj) if real_mime_type != 'image/gif' else 'N/A'
-                    nudity_results = detect_nudity(image_path)
-                    stego_detected, variance = detect_steganography(image_path)
+def process_image(image_path, verbose):
+    try:
+        if not os.path.isfile(image_path):
+            image_path = download_image(image_path)
+            if not image_path:
+                return None
 
-                    # Create a table row with the extracted information
-                    row = [
-                        image_url,
-                        image_hash,
-                        str(dominant_color),
-                        "✅" if faces_found else "❌",
-                        json.dumps(nudity_results, indent=2),
-                        "✅" if stego_detected else "❌"
-                    ]
-                    return row
-            except (UnidentifiedImageError, OSError) as error:
-                if verbose:
-                    console.print(f"[bold red]Error processing image at {image_url}[/bold red]: {error}", highlight=True)
-            finally:
-                os.remove(image_path)
-        else:
-            console.print(f"[bold red]Unsupported image MIME type {real_mime_type} encountered at URL:[/bold red] {image_url}", highlight=True)
+        real_mime_type = magic.from_file(image_path, mime=True)
+        if not real_mime_type.startswith('image/'):
+            logger.warning(f"Unsupported image MIME type {real_mime_type} encountered at: {image_path}")
+            return None
+
+        with Image.open(image_path) as img_obj:
+            image_hash = get_image_hash(img_obj)
+            exif_info = extract_exif_data(img_obj)
+            detected_text = extract_text_from_image(img_obj)
+            dominant_color = get_dominant_color(image_path) if real_mime_type != 'image/gif' else 'N/A'
+            faces_found = detect_faces(img_obj) if real_mime_type != 'image/gif' else 'N/A'
+            nudity_results = detect_nudity(image_path)
+            stego_detected, variance = detect_steganography(image_path)
+
+            # Create a table row with the extracted information
+            row = [
+                image_path,
+                image_hash,
+                str(dominant_color),
+                "✅" if faces_found else "❌",
+                json.dumps(nudity_results, indent=2),
+                "✅" if stego_detected else "❌"
+            ]
+            return row
+    except (UnidentifiedImageError, OSError) as error:
+        if verbose:
+            logger.error(f"Error processing image at {image_path}: {error}")
+    finally:
+        if image_path != str(image_path):  # If it's a downloaded file
             os.remove(image_path)
     return None
 
@@ -230,25 +240,9 @@ def crawl(url, depth, verbose):
                         results.append(result)
                     progress.update(task, advance=1)
 
-        # Create and display the table
+        # Display and save results
         if results:
-            table = Table(show_header=True, header_style="bold magenta")
-            table.add_column("Image URL", style="cyan", overflow="fold")
-            table.add_column("Hash", style="yellow", overflow="fold")
-            table.add_column("Dominant Color", style="green")
-            table.add_column("Faces Detected", style="bright_white")
-            table.add_column("Nudity Assessment", style="red", no_wrap=True)
-            table.add_column("Steganography Detected", style="bright_white", overflow="fold")
-            for row in results:
-                table.add_row(*row)
-            console.print("\nProcessed Image Information:")
-            console.print(table)
-
-            # Save results to CSV
-            with open("results.csv", "w", newline="") as csvfile:
-                writer = csv.writer(csvfile)
-                writer.writerow(table.columns) # Write header row
-                writer.writerows(results)
+            display_results(results)
 
         # Extract links for further crawling
         next_urls = [urljoin(url, link['href']) for link in soup.select('a[href]')]
@@ -260,14 +254,62 @@ def crawl(url, depth, verbose):
     except requests.RequestException as e:
         print(f"Error crawling {url}: {e}")
 
+def process_local_folder(folder_path, verbose):
+    image_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'}
+    results = []
+    
+    with Progress() as progress:
+        files = list(Path(folder_path).rglob('*'))
+        task = progress.add_task("[green]Processing local images...", total=len(files))
+        
+        for file_path in files:
+            if file_path.suffix.lower() in image_extensions:
+                try:
+                    result = process_image(str(file_path), verbose)
+                    if result:
+                        results.append(result)
+                except Exception as e:
+                    logger.error(f"Error processing {file_path}: {e}")
+                finally:
+                    progress.update(task, advance=1)
+    
+    return results
+
 def main():
-    parser = argparse.ArgumentParser(description="Suspicious Image Collection Kit -- SiCK v0.20")
-    parser.add_argument("url", help="The URL to start crawling")
-    parser.add_argument("-d", "--depth", type=int, default=1, help="Depth of crawling")
+    parser = argparse.ArgumentParser(description="Suspicious Image Collection Kit -- SiCK v0.21")
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("-u", "--url", help="The URL to start crawling")
+    group.add_argument("-f", "--folder", help="Local folder to scan for images")
+    parser.add_argument("-d", "--depth", type=int, default=1, help="Depth of crawling (for URL mode)")
     parser.add_argument("-v", "--verbose", action='store_true', help="Increase output verbosity (show errors)")
     args = parser.parse_args()
 
-    crawl(args.url, args.depth, args.verbose)
+    if args.url:
+        crawl(args.url, args.depth, args.verbose)
+    elif args.folder:
+        results = process_local_folder(args.folder, args.verbose)
+        if results:
+            display_results(results)
 
 if __name__ == "__main__":
     main()
+def display_results(results):
+    table = Table(show_header=True, header_style="bold magenta")
+    table.add_column("Image Path/URL", style="cyan", overflow="fold")
+    table.add_column("Hash", style="yellow", overflow="fold")
+    table.add_column("Dominant Color", style="green")
+    table.add_column("Faces Detected", style="bright_white")
+    table.add_column("Nudity Assessment", style="red", no_wrap=True)
+    table.add_column("Steganography Detected", style="bright_white", overflow="fold")
+    for row in results:
+        table.add_row(*row)
+    console.print("\nProcessed Image Information:")
+    console.print(table)
+
+    # Save results to CSV
+    with open("results.csv", "w", newline="") as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(table.columns)  # Write header row
+        writer.writerows(results)
+    
+    logger.info(f"Results saved to results.csv")
