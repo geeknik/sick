@@ -450,7 +450,7 @@ def crawl(url, depth, verbose):
             crawl(next_url, depth - 1, verbose)
 
     except requests.RequestException as e:
-        print(f"Error crawling {url}: {e}")
+        logger.error(f"Error crawling {url}: {e}")
 
 def process_local_folder(folder_path, verbose):
     image_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'}
@@ -524,49 +524,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-def display_results(results):
-    table = Table(show_header=True, header_style="bold magenta")
-    table.add_column("Image Path/URL", style="cyan", overflow="fold")
-    table.add_column("Hash", style="yellow", overflow="fold")
-    table.add_column("Dominant Color", style="green")
-    table.add_column("Faces Detected", style="bright_white")
-    table.add_column("Nudity Assessment", style="red", no_wrap=True)
-    table.add_column("Steganography Detected", style="bright_white", overflow="fold")
-    table.add_column("Estimated Age", style="bright_blue")
-    table.add_column("Hidden Text", style="bright_yellow", overflow="fold")
-    table.add_column("Frame Count", style="bright_magenta")
-    table.add_column("Duration", style="bright_cyan")
-    table.add_column("AI Generated", style="bright_green")
-    table.add_column("Child Exploitation", style="red")
-    table.add_column("Child Exploitation Details", style="red", overflow="fold")
-    for row in results:
-        table.add_row(*row)
-    console.print("\nProcessed Image Information:")
-    console.print(table)
-
-    # Save results to CSV with improved headers
-    csv_headers = [
-        "Image URL",
-        "Hash",
-        "Dominant Color",
-        "Faces Detected",
-        "Nudity Assessment",
-        "Steganography Detected",
-        "Estimated Age",
-        "Hidden Text",
-        "Frame Count",
-        "Duration",
-        "AI Generated",
-        "Child Exploitation",
-        "Child Exploitation Details",
-        "Frame Count",
-        "Duration",
-        "AI Generated",
-        "Child Exploitation"
-    ]
-    with open("results.csv", "w", newline="", encoding="utf-8") as csvfile:
-        writer = csv.writer(csvfile)
-        writer.writerow(csv_headers)  # Write header row
-        writer.writerows(results)
-    
-    logger.info(f"Results saved to results.csv")
