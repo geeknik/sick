@@ -464,15 +464,31 @@ def display_results(results):
     table.add_column("Faces Detected", style="bright_white")
     table.add_column("Nudity Assessment", style="red", no_wrap=True)
     table.add_column("Steganography Detected", style="bright_white", overflow="fold")
+    table.add_column("Estimated Age", style="bright_blue")
+    table.add_column("Hidden Text", style="bright_yellow", overflow="fold")
+    table.add_column("Frame Count", style="bright_magenta")
+    table.add_column("Duration", style="bright_cyan")
     for row in results:
         table.add_row(*row)
     console.print("\nProcessed Image Information:")
     console.print(table)
 
-    # Save results to CSV
-    with open("results.csv", "w", newline="") as csvfile:
+    # Save results to CSV with improved headers
+    csv_headers = [
+        "Image URL",
+        "Hash",
+        "Dominant Color",
+        "Faces Detected",
+        "Nudity Assessment",
+        "Steganography Detected",
+        "Estimated Age",
+        "Hidden Text",
+        "Frame Count",
+        "Duration"
+    ]
+    with open("results.csv", "w", newline="", encoding="utf-8") as csvfile:
         writer = csv.writer(csvfile)
-        writer.writerow(table.columns)  # Write header row
+        writer.writerow(csv_headers)  # Write header row
         writer.writerows(results)
     
     logger.info(f"Results saved to results.csv")
