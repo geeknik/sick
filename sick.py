@@ -48,6 +48,10 @@ def rs_analysis(lsb_array):
 # Function to detect nudity in an image
 def detect_nudity(image_path):
     try:
+        # Check if the image is a GIF
+        if image_path.lower().endswith('.gif'):
+            return ["GIF images are not supported for nudity detection"]
+        
         detections = nude_detector.detect(image_path)
         nudity_related_classes = {
             'EXPOSED_ANUS', 'EXPOSED_BUTTOCKS', 'EXPOSED_BREAST',
@@ -59,7 +63,7 @@ def detect_nudity(image_path):
         ]
         return nudity_detections
     except Exception as e:
-        print(f"Error during nudity detection in image: {image_path}. Error: {e}")
+        logger.error(f"Error during nudity detection in image: {image_path}. Error: {e}")
         return []
 
 # Function to generate a hash for an image
@@ -274,6 +278,27 @@ def process_local_folder(folder_path, verbose):
                     progress.update(task, advance=1)
     
     return results
+
+def display_results(results):
+    table = Table(show_header=True, header_style="bold magenta")
+    table.add_column("Image Path/URL", style="cyan", overflow="fold")
+    table.add_column("Hash", style="yellow", overflow="fold")
+    table.add_column("Dominant Color", style="green")
+    table.add_column("Faces Detected", style="bright_white")
+    table.add_column("Nudity Assessment", style="red", no_wrap=True)
+    table.add_column("Steganography Detected", style="bright_white", overflow="fold")
+    for row in results:
+        table.add_row(*row)
+    console.print("\nProcessed Image Information:")
+    console.print(table)
+
+    # Save results to CSV
+    with open("results.csv", "w", newline="") as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(table.columns)  # Write header row
+        writer.writerows(results)
+    
+    logger.info(f"Results saved to results.csv")
 
 def main():
     parser = argparse.ArgumentParser(description="Suspicious Image Collection Kit -- SiCK v0.21")
