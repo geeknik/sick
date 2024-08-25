@@ -3,6 +3,7 @@ from PIL import ExifTags, UnidentifiedImageError, ImageChops, ImageFilter
 import imagehash
 from fake_useragent import UserAgent
 from rich.progress import Progress
+from scipy import stats
 from scipy.stats import binomtest, chi2, entropy
 from colorthief import ColorThief
 from nudenet import NudeDetector
@@ -31,7 +32,14 @@ from pathlib import Path
 # Initialize Globals
 console = Console()
 user_agent = UserAgent()
-nude_detector = NudeDetector()
+nude_detector = None
+
+def initialize_nude_detector():
+    global nude_detector
+    if nude_detector is None:
+        logger.info("Initializing NudeDetector. This may take a moment...")
+        nude_detector = NudeDetector()
+        logger.info("NudeDetector initialized successfully.")
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -308,9 +316,20 @@ def detect_hidden_text(np_img):
 def detect_age(image_path):
     try:
         result = DeepFace.analyze(image_path, actions=['age'], enforce_detection=False)
-        return result[0]['age']
+        if isinstance(result, list) and len(result) > 0:
+            return result[0].get('age')
+        else:
+            logger.warning(f"No face detected for age estimation in image: {image_path}")
+            return None
+    except ValueError as e:
+        if "Face could not be detected" in str(e):
+            logger.warning(f"No face detected for age estimation in image: {image_path}")
+            return None
+        else:
+            logger.error(f"Error during age detection in image: {image_path}. Error: {e}")
+            return None
     except Exception as e:
-        logger.error(f"Error during age detection in image: {image_path}. Error: {e}")
+        logger.error(f"Unexpected error during age detection in image: {image_path}. Error: {e}")
         return None
 
 def detect_potential_child_exploitation(image_path, faces_detected):
@@ -333,6 +352,7 @@ def process_image(image_path, verbose):
     downloaded_file = None
     original_url = image_path if not os.path.isfile(image_path) else None
     try:
+        initialize_nude_detector()
         if not os.path.isfile(image_path):
             logger.info(f"Downloading image from URL: {image_path}")
             downloaded_file = download_image(image_path)
@@ -456,14 +476,19 @@ def process_local_folder(folder_path, verbose):
         files = list(Path(folder_path).rglob('*'))
         task = progress.add_task("[green]Processing local images...", total=len(files))
         
-        for file_path in files:
-            if file_path.suffix.lower() in image_extensions:
+        with ThreadPoolExecutor() as executor:
+            futures = []
+            for file_path in files:
+                if file_path.suffix.lower() in image_extensions:
+                    futures.append(executor.submit(process_image, str(file_path), verbose))
+            
+            for future in as_completed(futures):
                 try:
-                    result = process_image(str(file_path), verbose)
+                    result = future.result()
                     if result:
                         results.append(result)
                 except Exception as e:
-                    logger.error(f"Error processing {file_path}: {e}")
+                    logger.error(f"Error processing image: {e}")
                 finally:
                     progress.update(task, advance=1)
     
