@@ -165,11 +165,17 @@ def detect_steganography(image_path):
     try:
         img = Image.open(image_path)
 
-        # Handle PNG transparency
-        if img.mode == 'RGBA':
-            img = img.convert('RGB')
+        # Handle PNG transparency and convert to RGB
+        if img.mode in ('RGBA', 'LA') or (img.mode == 'P' and 'transparency' in img.info):
+            bg = Image.new('RGB', img.size, (255, 255, 255))
+            bg.paste(img, mask=img.split()[3] if img.mode == 'RGBA' else None)
+            img = bg
 
-        np_img = np.array(img)
+        np_img = np.array(img).astype(np.uint8)
+
+        # Ensure the image is 3D (for RGB channels)
+        if len(np_img.shape) == 2:
+            np_img = np.stack((np_img,) * 3, axis=-1)
 
         # LSB Analysis
         lsb_array = np.bitwise_and(np_img.flatten(), 1)
@@ -191,7 +197,7 @@ def detect_steganography(image_path):
 
         # DCT Analysis
         dct_coeffs = dctn(np_img[:,:,0], norm='ortho')  # Analyze first channel
-        dct_lsb = np.bitwise_and(dct_coeffs.flatten(), 1)
+        dct_lsb = np.bitwise_and(dct_coeffs.flatten().astype(np.int64), 1)
         dct_chi_square_stat = np.sum((np.bincount(dct_lsb, minlength=2) - len(dct_lsb)/2)**2) / (len(dct_lsb)/2)
         dct_chi_square_p_value = 1 - stats.chi2.cdf(dct_chi_square_stat, 1)
 
@@ -257,7 +263,11 @@ def process_image(image_path, verbose):
 
         real_mime_type = magic.from_file(image_path, mime=True)
         if not real_mime_type.startswith('image/'):
-            logger.warning(f"Unsupported image MIME type {real_mime_type} encountered at: {image_path}")
+            logger.warning(f"Unsupported file type {real_mime_type} encountered at: {image_path}")
+            return None
+
+        if real_mime_type == 'image/svg+xml':
+            logger.warning(f"SVG file encountered at: {image_path}. SVG processing is not supported.")
             return None
 
         with Image.open(image_path) as img_obj:
@@ -267,8 +277,8 @@ def process_image(image_path, verbose):
             dominant_color = get_dominant_color(image_path) if real_mime_type != 'image/gif' else 'N/A'
             faces_found = detect_faces(img_obj) if real_mime_type != 'image/gif' else 'N/A'
             nudity_results = detect_nudity(image_path)
-            stego_detected, stego_score, hidden_text = detect_steganography(image_path)
-            age_estimation = detect_age(image_path) if real_mime_type != 'image/gif' else 'N/A'
+            stego_detected, stego_score, hidden_text = detect_steganography(image_path) if real_mime_type != 'image/gif' else (False, None, None)
+            age_estimation = detect_age(image_path) if real_mime_type != 'image/gif' and faces_found else 'N/A'
 
             # Create a table row with the extracted information
             row = [
@@ -277,7 +287,7 @@ def process_image(image_path, verbose):
                 str(dominant_color),
                 "Yes" if faces_found else "No",
                 json.dumps(nudity_results, indent=2),
-                f"{'Yes' if stego_detected else 'No'} (Score: {stego_score})",
+                f"{'Yes' if stego_detected else 'No'} (Score: {stego_score})" if stego_score is not None else "N/A",
                 str(age_estimation),
                 hidden_text if hidden_text else "None detected"
             ]
