@@ -190,11 +190,37 @@ def detect_steganography(image_path):
             (dct_chi_square_p_value < 0.05)
         )
 
-        return stego_score >= 2, stego_score  # Consider it suspicious if 2 or more tests indicate steganography
+        # Detect hidden text
+        hidden_text = detect_hidden_text(np_img)
+
+        return stego_score >= 2, stego_score, hidden_text  # Consider it suspicious if 2 or more tests indicate steganography
 
     except Exception as e:
         logger.error(f"Error during steganography detection in image: {image_path}. Error: {e}")
-        return False, None
+        return False, None, None
+
+def detect_hidden_text(np_img):
+    try:
+        # Extract LSB from each color channel
+        lsb_r = np.bitwise_and(np_img[:,:,0], 1).flatten()
+        lsb_g = np.bitwise_and(np_img[:,:,1], 1).flatten()
+        lsb_b = np.bitwise_and(np_img[:,:,2], 1).flatten()
+
+        # Combine LSBs to form bytes
+        lsb_combined = np.packbits(np.column_stack((lsb_r, lsb_g, lsb_b)).flatten())
+
+        # Convert bytes to string
+        hidden_text = lsb_combined.tobytes().decode('utf-8', errors='ignore')
+
+        # Remove non-printable characters
+        hidden_text = ''.join(filter(lambda x: x.isprintable(), hidden_text))
+
+        # Return first 100 characters if any text is found
+        return hidden_text[:100] if hidden_text.strip() else None
+
+    except Exception as e:
+        logger.error(f"Error during hidden text detection: {e}")
+        return None
 
 def detect_age(image_path):
     try:
@@ -224,7 +250,7 @@ def process_image(image_path, verbose):
             dominant_color = get_dominant_color(image_path) if real_mime_type != 'image/gif' else 'N/A'
             faces_found = detect_faces(img_obj) if real_mime_type != 'image/gif' else 'N/A'
             nudity_results = detect_nudity(image_path)
-            stego_detected, stego_score = detect_steganography(image_path)
+            stego_detected, stego_score, hidden_text = detect_steganography(image_path)
             age_estimation = detect_age(image_path) if real_mime_type != 'image/gif' else 'N/A'
 
             # Create a table row with the extracted information
@@ -235,7 +261,8 @@ def process_image(image_path, verbose):
                 "✅" if faces_found else "❌",
                 json.dumps(nudity_results, indent=2),
                 f"{'✅' if stego_detected else '❌'} (Score: {stego_score})",
-                str(age_estimation)
+                str(age_estimation),
+                hidden_text if hidden_text else "None detected"
             ]
             return row
     except (UnidentifiedImageError, OSError) as error:
@@ -315,7 +342,7 @@ def display_results(results):
     table.add_column("Nudity Assessment", style="red", no_wrap=True)
     table.add_column("Steganography Detected", style="bright_white", overflow="fold")
     table.add_column("Estimated Age", style="bright_blue")
-    table.add_column("Estimated Age", style="bright_blue")
+    table.add_column("Hidden Text", style="bright_yellow", overflow="fold")
     for row in results:
         table.add_row(*row)
     console.print("\nProcessed Image Information:")
