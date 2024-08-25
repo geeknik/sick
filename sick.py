@@ -174,6 +174,35 @@ def download_image(url):
         logger.error(f"Unexpected error downloading image from {url}: {e}")
     return None
 
+def detect_ai_generated(image_path):
+    try:
+        with Image.open(image_path) as img:
+            # Convert to grayscale
+            img_gray = img.convert('L')
+            
+            # Compute the difference hash
+            dhash = imagehash.dhash(img_gray)
+            
+            # Compute the wavelet hash
+            whash = imagehash.whash(img_gray)
+            
+            # Compute the perceptual hash
+            phash = imagehash.phash(img_gray)
+            
+            # Check for unnaturally smooth gradients
+            edges = img_gray.filter(ImageFilter.FIND_EDGES)
+            edge_ratio = np.sum(np.array(edges) > 0) / (img_gray.width * img_gray.height)
+            
+            # Combine metrics (you may need to adjust these thresholds based on experimentation)
+            ai_score = (dhash.hash.sum() / 256 + whash.hash.sum() / 256 + phash.hash.sum() / 256) / 3
+            ai_score = (ai_score + (1 - edge_ratio)) / 2  # Incorporate edge information
+            
+            return ai_score > 0.6, ai_score  # Threshold can be adjusted
+
+    except Exception as e:
+        logger.error(f"Error during AI generation detection in image: {image_path}. Error: {e}")
+        return False, None
+
 # Function to get the dominant color of an image
 def get_dominant_color(image_path):
     try:
