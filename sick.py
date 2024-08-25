@@ -247,6 +247,7 @@ def detect_age(image_path):
 # Function to process an image and extract information
 def process_image(image_path, verbose):
     downloaded_file = None
+    original_url = image_path if not os.path.isfile(image_path) else None
     try:
         if not os.path.isfile(image_path):
             downloaded_file = download_image(image_path)
@@ -271,12 +272,12 @@ def process_image(image_path, verbose):
 
             # Create a table row with the extracted information
             row = [
-                image_path,
+                original_url or image_path,
                 image_hash,
                 str(dominant_color),
-                "✅" if faces_found else "❌",
+                "Yes" if faces_found else "No",
                 json.dumps(nudity_results, indent=2),
-                f"{'✅' if stego_detected else '❌'} (Score: {stego_score})",
+                f"{'Yes' if stego_detected else 'No'} (Score: {stego_score})",
                 str(age_estimation),
                 hidden_text if hidden_text else "None detected"
             ]
@@ -364,10 +365,20 @@ def display_results(results):
     console.print("\nProcessed Image Information:")
     console.print(table)
 
-    # Save results to CSV
-    with open("results.csv", "w", newline="") as csvfile:
+    # Save results to CSV with improved headers
+    csv_headers = [
+        "Image URL",
+        "Hash",
+        "Dominant Color",
+        "Faces Detected",
+        "Nudity Assessment",
+        "Steganography Detected",
+        "Estimated Age",
+        "Hidden Text"
+    ]
+    with open("results.csv", "w", newline="", encoding="utf-8") as csvfile:
         writer = csv.writer(csvfile)
-        writer.writerow(table.columns)  # Write header row
+        writer.writerow(csv_headers)  # Write header row
         writer.writerows(results)
     
     logger.info(f"Results saved to results.csv")
