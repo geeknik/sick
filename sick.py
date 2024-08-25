@@ -558,7 +558,11 @@ def display_results(results):
         "Duration",
         "AI Generated",
         "Child Exploitation",
-        "Child Exploitation Details"
+        "Child Exploitation Details",
+        "Frame Count",
+        "Duration",
+        "AI Generated",
+        "Child Exploitation"
     ]
     with open("results.csv", "w", newline="", encoding="utf-8") as csvfile:
         writer = csv.writer(csvfile)
