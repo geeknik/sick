@@ -25,6 +25,7 @@ import cv2
 import csv
 import os
 import logging
+import base64
 from pathlib import Path
 from scipy.fft import dctn
 from scipy import stats
