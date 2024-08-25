@@ -194,6 +194,14 @@ def detect_steganography(image_path):
         logger.error(f"Error during steganography detection in image: {image_path}. Error: {e}")
         return False, None
 
+def detect_age(image_path):
+    try:
+        result = DeepFace.analyze(image_path, actions=['age'])
+        return result[0]['age']
+    except Exception as e:
+        logger.error(f"Error during age detection in image: {image_path}. Error: {e}")
+        return None
+
 # Function to process an image and extract information
 def process_image(image_path, verbose):
     try:
