@@ -109,31 +109,44 @@ def detect_faces(pil_image):
 # Function to download an image with a random user agent
 def download_image(url):
     try:
-        headers = {'User-Agent': user_agent.random}
-        response = requests.head(url, headers=headers)  # Check content type first
-
-        if response.status_code == 200:  # Check for successful response
-            content_type = response.headers.get('Content-Type')
-            if content_type and content_type.startswith('image/'):
-                response = requests.get(url, timeout=10, headers=headers)
-                response.raise_for_status()
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".tmp") as f:
-                    f.write(response.content)
-                    f.flush()
-                    real_mime_type = magic.from_file(f.name, mime=True)
-                    correct_extension = real_mime_type.split('/')[1].lower()
-                    new_filename = f'{f.name}.{correct_extension}'
-                    os.rename(f.name, new_filename)
-                    return new_filename
-            else:
-                print(f"Content at {url} does not appear to be a valid image (missing or invalid Content-Type).")
-                return None
+        if url.startswith('data:'):
+            # Handle data URLs
+            header, encoded = url.split(",", 1)
+            data = base64.b64decode(encoded)
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".tmp") as f:
+                f.write(data)
+                f.flush()
+                real_mime_type = magic.from_file(f.name, mime=True)
+                correct_extension = real_mime_type.split('/')[1].lower()
+                new_filename = f'{f.name}.{correct_extension}'
+                os.rename(f.name, new_filename)
+                return new_filename
         else:
-            print(f"Error accessing URL {url}: Status code {response.status_code}")
-            return None
+            headers = {'User-Agent': user_agent.random}
+            response = requests.head(url, headers=headers)  # Check content type first
+
+            if response.status_code == 200:  # Check for successful response
+                content_type = response.headers.get('Content-Type')
+                if content_type and content_type.startswith('image/'):
+                    response = requests.get(url, timeout=10, headers=headers)
+                    response.raise_for_status()
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".tmp") as f:
+                        f.write(response.content)
+                        f.flush()
+                        real_mime_type = magic.from_file(f.name, mime=True)
+                        correct_extension = real_mime_type.split('/')[1].lower()
+                        new_filename = f'{f.name}.{correct_extension}'
+                        os.rename(f.name, new_filename)
+                        return new_filename
+                else:
+                    logger.warning(f"Content at {url} does not appear to be a valid image (missing or invalid Content-Type).")
+                    return None
+            else:
+                logger.warning(f"Error accessing URL {url}: Status code {response.status_code}")
+                return None
 
     except requests.RequestException as e:
-        print(f"Error downloading image: {e}")
+        logger.error(f"Error downloading image: {e}")
         return None
 
 # Function to get the dominant color of an image
@@ -232,11 +245,13 @@ def detect_age(image_path):
 
 # Function to process an image and extract information
 def process_image(image_path, verbose):
+    downloaded_file = None
     try:
         if not os.path.isfile(image_path):
-            image_path = download_image(image_path)
-            if not image_path:
+            downloaded_file = download_image(image_path)
+            if not downloaded_file:
                 return None
+            image_path = downloaded_file
 
         real_mime_type = magic.from_file(image_path, mime=True)
         if not real_mime_type.startswith('image/'):
@@ -269,8 +284,8 @@ def process_image(image_path, verbose):
         if verbose:
             logger.error(f"Error processing image at {image_path}: {error}")
     finally:
-        if image_path != str(image_path):  # If it's a downloaded file
-            os.remove(image_path)
+        if downloaded_file and os.path.exists(downloaded_file):
+            os.remove(downloaded_file)
     return None
 
 # Function to crawl a website and process images
