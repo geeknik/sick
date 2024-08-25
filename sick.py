@@ -201,19 +201,19 @@ def detect_steganography(image_path):
             dct_chi_square_stat = np.sum((np.bincount(dct_lsb, minlength=2) - len(dct_lsb)/2)**2) / (len(dct_lsb)/2)
             dct_chi_square_p_value = 1 - stats.chi2.cdf(dct_chi_square_stat, 1)
 
-            # Combine results
+            # Combine results with adjusted thresholds
             stego_score = (
-                (lsb_variance > 0.25) +
-                (chi_square_p_value < 0.05) +
-                (sp_chi_square_p_value < 0.05) +
+                (lsb_variance > 0.3) +  # Increased threshold
+                (chi_square_p_value < 0.01) +  # More stringent p-value
+                (sp_chi_square_p_value < 0.01) +  # More stringent p-value
                 rs_result +
-                (dct_chi_square_p_value < 0.05)
+                (dct_chi_square_p_value < 0.01)  # More stringent p-value
             )
 
             # Detect hidden text
             hidden_text = detect_hidden_text(np_img)
 
-            return stego_score >= 2, stego_score, hidden_text  # Consider it suspicious if 2 or more tests indicate steganography
+            return stego_score >= 3, stego_score, hidden_text  # Consider it suspicious if 3 or more tests indicate steganography
 
     except Exception as e:
         logger.error(f"Error during steganography detection in image: {image_path}. Error: {e}")
@@ -232,11 +232,13 @@ def detect_hidden_text(np_img):
         # Convert bytes to string
         hidden_text = lsb_combined.tobytes().decode('utf-8', errors='ignore')
 
-        # Remove non-printable characters
-        hidden_text = ''.join(filter(lambda x: x.isprintable(), hidden_text))
+        # Remove non-printable characters and filter out short words
+        words = ''.join(filter(lambda x: x.isprintable(), hidden_text)).split()
+        meaningful_words = [word for word in words if len(word) >= 4]  # Only keep words with 4 or more characters
 
-        # Return first 100 characters if any text is found
-        return hidden_text[:100] if hidden_text.strip() else None
+        # Join meaningful words and return
+        result = ' '.join(meaningful_words)
+        return result[:100] if result else None  # Return first 100 characters if any meaningful text is found
 
     except Exception as e:
         logger.error(f"Error during hidden text detection: {e}")
