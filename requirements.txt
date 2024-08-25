@@ -43,6 +43,7 @@ requests
 requests-oauthlib
 rich
 rsa
+scikit-learn
 six
 soupsieve
 sympy
@@ -53,6 +54,7 @@ tensorflow-estimator
 tensorflow-io-gcs-filesystem
 termcolor
 tesseract
+tf-keras
 typing_extensions
 urllib3
 Werkzeug
