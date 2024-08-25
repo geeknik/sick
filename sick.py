@@ -107,8 +107,13 @@ def detect_faces(pil_image):
         else:
             logger.warning(f"Unexpected image shape: {cv_image.shape}")
             return False
+        
         face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-        faces = face_cascade.detectMultiScale(gray_image, 1.1, 4)
+        if face_cascade.empty():
+            logger.error("Error loading face cascade classifier")
+            return False
+        
+        faces = face_cascade.detectMultiScale(gray_image, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
         return len(faces) > 0
     except Exception as e:
         logger.error(f"Error in face detection: {e}")
@@ -125,6 +130,9 @@ def download_image(url):
                 f.write(data)
                 f.flush()
                 real_mime_type = magic.from_file(f.name, mime=True)
+                if not real_mime_type.startswith('image/'):
+                    logger.warning(f"Content from data URL is not a valid image (MIME type: {real_mime_type}).")
+                    return None
                 correct_extension = real_mime_type.split('/')[1].lower()
                 new_filename = f'{f.name}.{correct_extension}'
                 os.rename(f.name, new_filename)
@@ -134,19 +142,21 @@ def download_image(url):
             response = requests.get(url, timeout=10, headers=headers, stream=True)
             response.raise_for_status()
             content_type = response.headers.get('Content-Type', '').lower()
-            if content_type.startswith('image/'):
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".tmp") as f:
-                    for chunk in response.iter_content(chunk_size=8192):
-                        f.write(chunk)
-                    f.flush()
-                    real_mime_type = magic.from_file(f.name, mime=True)
-                    correct_extension = real_mime_type.split('/')[1].lower()
-                    new_filename = f'{f.name}.{correct_extension}'
-                    os.rename(f.name, new_filename)
-                    return new_filename
-            else:
+            if not content_type.startswith('image/'):
                 logger.warning(f"Content at {url} does not appear to be a valid image (Content-Type: {content_type}).")
                 return None
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".tmp") as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    f.write(chunk)
+                f.flush()
+                real_mime_type = magic.from_file(f.name, mime=True)
+                if not real_mime_type.startswith('image/'):
+                    logger.warning(f"Downloaded content is not a valid image (MIME type: {real_mime_type}).")
+                    return None
+                correct_extension = real_mime_type.split('/')[1].lower()
+                new_filename = f'{f.name}.{correct_extension}'
+                os.rename(f.name, new_filename)
+                return new_filename
     except requests.RequestException as e:
         logger.error(f"Error downloading image from {url}: {e}")
     except Exception as e:
@@ -162,8 +172,12 @@ def get_dominant_color(image_path):
             color_thief = ColorThief(img)
             dominant_color = color_thief.get_color(quality=1)
         return dominant_color
+    except OSError as e:
+        logger.error(f"OS error when getting dominant color for {image_path}: {e}")
+    except ValueError as e:
+        logger.error(f"Value error when getting dominant color for {image_path}: {e}")
     except Exception as e:
-        logger.error(f"Error getting dominant color: {image_path}. Error: {e}")
+        logger.error(f"Unexpected error when getting dominant color for {image_path}: {e}")
     return None
 
 # Function to detect steganography in an image
@@ -263,12 +277,16 @@ def process_image(image_path, verbose):
     original_url = image_path if not os.path.isfile(image_path) else None
     try:
         if not os.path.isfile(image_path):
+            logger.info(f"Downloading image from URL: {image_path}")
             downloaded_file = download_image(image_path)
             if not downloaded_file:
+                logger.warning(f"Failed to download image from URL: {image_path}")
                 return None
             image_path = downloaded_file
+            logger.info(f"Image downloaded successfully: {image_path}")
 
         real_mime_type = magic.from_file(image_path, mime=True)
+        logger.info(f"Detected MIME type: {real_mime_type}")
         if not real_mime_type.startswith('image/'):
             logger.warning(f"Unsupported file type {real_mime_type} encountered at: {image_path}")
             return None
@@ -278,11 +296,13 @@ def process_image(image_path, verbose):
             return None
 
         with Image.open(image_path) as img_obj:
+            logger.info(f"Processing image: {image_path}")
             image_hash = get_image_hash(img_obj)
             exif_info = extract_exif_data(img_obj)
             detected_text = extract_text_from_image(img_obj)
             
             if real_mime_type == 'image/gif':
+                logger.info("Processing GIF image")
                 dominant_color = 'N/A'
                 faces_found = 'N/A'
                 stego_detected, stego_score, hidden_text = False, None, None
@@ -290,6 +310,7 @@ def process_image(image_path, verbose):
                 frame_count = img_obj.n_frames
                 duration = img_obj.info.get('duration', 'N/A')
             else:
+                logger.info("Processing non-GIF image")
                 dominant_color = get_dominant_color(image_path)
                 faces_found = detect_faces(img_obj)
                 stego_detected, stego_score, hidden_text = detect_steganography(image_path)
@@ -312,13 +333,16 @@ def process_image(image_path, verbose):
                 str(frame_count),
                 str(duration)
             ]
+            logger.info(f"Successfully processed image: {image_path}")
             return row
     except (UnidentifiedImageError, OSError) as error:
-        if verbose:
-            logger.error(f"Error processing image at {image_path}: {error}")
+        logger.error(f"Error processing image at {image_path}: {error}")
+    except Exception as e:
+        logger.error(f"Unexpected error processing image at {image_path}: {e}")
     finally:
         if downloaded_file and os.path.exists(downloaded_file):
             os.remove(downloaded_file)
+            logger.info(f"Removed temporary file: {downloaded_file}")
     return None
 
 # Function to crawl a website and process images
