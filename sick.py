@@ -153,30 +153,43 @@ def detect_steganography(image_path):
 
         np_img = np.array(img)
 
-        # LSB Variance Analysis
+        # LSB Analysis
         lsb_array = np.bitwise_and(np_img.flatten(), 1)
-        variance = np.var(lsb_array)
+        lsb_variance = np.var(lsb_array)
 
-        # Adaptive Thresholding (example based on image size)
-        image_size = img.size
-        if image_size[0] * image_size[1] > 1000000:
-            lsb_threshold = 0.27  # Adjust thresholds as needed
-        else:
-            lsb_threshold = 0.25
+        # Chi-Square Test
+        observed_freq = np.bincount(lsb_array, minlength=2)
+        expected_freq = np.sum(observed_freq) / 2
+        chi_square_stat = np.sum((observed_freq - expected_freq)**2 / expected_freq)
+        chi_square_p_value = 1 - scipy.stats.chi2.cdf(chi_square_stat, 1)
 
-        # DCT Analysis (optional)
-        dct_coeffs = dctn(np_img, norm='ortho')
-        # ... (implement your DCT analysis and return a boolean result) ...
-        dct_analysis_result = False  # Placeholder for DCT analysis result
+        # Sample Pair Analysis
+        sample_pairs = np.column_stack((lsb_array[::2], lsb_array[1::2]))
+        sp_chi_square_stat = np.sum((np.bincount(sample_pairs.dot([1, 2])) - len(sample_pairs)/4)**2) / (len(sample_pairs)/4)
+        sp_chi_square_p_value = 1 - scipy.stats.chi2.cdf(sp_chi_square_stat, 3)
+
+        # RS Analysis
+        rs_result = rs_analysis(lsb_array)
+
+        # DCT Analysis
+        dct_coeffs = dctn(np_img[:,:,0], norm='ortho')  # Analyze first channel
+        dct_lsb = np.bitwise_and(dct_coeffs.flatten(), 1)
+        dct_chi_square_stat = np.sum((np.bincount(dct_lsb, minlength=2) - len(dct_lsb)/2)**2) / (len(dct_lsb)/2)
+        dct_chi_square_p_value = 1 - scipy.stats.chi2.cdf(dct_chi_square_stat, 1)
 
         # Combine results
-        if variance > lsb_threshold or dct_analysis_result:
-            return True, variance
-        else:
-            return False, 0
+        stego_score = (
+            (lsb_variance > 0.25) +
+            (chi_square_p_value < 0.05) +
+            (sp_chi_square_p_value < 0.05) +
+            rs_result +
+            (dct_chi_square_p_value < 0.05)
+        )
+
+        return stego_score >= 2, stego_score  # Consider it suspicious if 2 or more tests indicate steganography
 
     except Exception as e:
-        print(f"Error during steganography detection in image: {image_path}. Error: {e}")
+        logger.error(f"Error during steganography detection in image: {image_path}. Error: {e}")
         return False, None
 
 # Function to process an image and extract information
@@ -199,7 +212,7 @@ def process_image(image_path, verbose):
             dominant_color = get_dominant_color(image_path) if real_mime_type != 'image/gif' else 'N/A'
             faces_found = detect_faces(img_obj) if real_mime_type != 'image/gif' else 'N/A'
             nudity_results = detect_nudity(image_path)
-            stego_detected, variance = detect_steganography(image_path)
+            stego_detected, stego_score = detect_steganography(image_path)
 
             # Create a table row with the extracted information
             row = [
@@ -208,7 +221,7 @@ def process_image(image_path, verbose):
                 str(dominant_color),
                 "✅" if faces_found else "❌",
                 json.dumps(nudity_results, indent=2),
-                "✅" if stego_detected else "❌"
+                f"{'✅' if stego_detected else '❌'} (Score: {stego_score})"
             ]
             return row
     except (UnidentifiedImageError, OSError) as error:
