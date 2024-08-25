@@ -26,8 +26,6 @@ import os
 import logging
 import base64
 from pathlib import Path
-from scipy.fft import dctn
-from scipy import stats
 
 # Initialize Globals
 console = Console()
@@ -480,6 +478,11 @@ def display_results(results):
     table.add_column("Steganography Detected", style="bright_white", overflow="fold")
     table.add_column("Estimated Age", style="bright_blue")
     table.add_column("Hidden Text", style="bright_yellow", overflow="fold")
+    table.add_column("Frame Count", style="bright_magenta")
+    table.add_column("Duration", style="bright_cyan")
+    table.add_column("AI Generated", style="bright_green")
+    table.add_column("Child Exploitation", style="red")
+    table.add_column("Child Exploitation Details", style="red", overflow="fold")
     for row in results:
         table.add_row(*row)
     console.print("\nProcessed Image Information:")
@@ -494,7 +497,12 @@ def display_results(results):
         "Nudity Assessment",
         "Steganography Detected",
         "Estimated Age",
-        "Hidden Text"
+        "Hidden Text",
+        "Frame Count",
+        "Duration",
+        "AI Generated",
+        "Child Exploitation",
+        "Child Exploitation Details"
     ]
     with open("results.csv", "w", newline="", encoding="utf-8") as csvfile:
         writer = csv.writer(csvfile)
