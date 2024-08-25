@@ -1,9 +1,9 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from PIL import ExifTags, UnidentifiedImageError, ImageChops
+from PIL import ExifTags, UnidentifiedImageError, ImageChops, ImageFilter
 import imagehash
 from fake_useragent import UserAgent
 from rich.progress import Progress
-from scipy.stats import binomtest
+from scipy.stats import binomtest, chi2, entropy
 from colorthief import ColorThief
 from nudenet import NudeDetector
 from urllib.parse import urljoin
@@ -19,6 +19,7 @@ import argparse
 import hashlib
 import magic
 from PIL import Image
+from scipy.fft import dctn
 import json
 import cv2
 import csv
