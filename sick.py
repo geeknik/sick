@@ -12,6 +12,7 @@ from rich.table import Table
 from scipy.fft import dctn
 from scipy import stats
 from PIL import Image
+from deepface import DeepFace
 import pytesseract
 import numpy as np
 import tempfile
@@ -214,6 +215,7 @@ def process_image(image_path, verbose):
             faces_found = detect_faces(img_obj) if real_mime_type != 'image/gif' else 'N/A'
             nudity_results = detect_nudity(image_path)
             stego_detected, stego_score = detect_steganography(image_path)
+            age_estimation = detect_age(image_path) if real_mime_type != 'image/gif' else 'N/A'
 
             # Create a table row with the extracted information
             row = [
@@ -222,7 +224,8 @@ def process_image(image_path, verbose):
                 str(dominant_color),
                 "✅" if faces_found else "❌",
                 json.dumps(nudity_results, indent=2),
-                f"{'✅' if stego_detected else '❌'} (Score: {stego_score})"
+                f"{'✅' if stego_detected else '❌'} (Score: {stego_score})",
+                str(age_estimation)
             ]
             return row
     except (UnidentifiedImageError, OSError) as error:
@@ -301,6 +304,7 @@ def display_results(results):
     table.add_column("Faces Detected", style="bright_white")
     table.add_column("Nudity Assessment", style="red", no_wrap=True)
     table.add_column("Steganography Detected", style="bright_white", overflow="fold")
+    table.add_column("Estimated Age", style="bright_blue")
     for row in results:
         table.add_row(*row)
     console.print("\nProcessed Image Information:")
