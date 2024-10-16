@@ -1,0 +1,203 @@
+{
+    "version": "v1.0.0",
+    "entity": {
+        "type": "individual",
+        "role": "maintainer",
+        "name": "Brian Carpenter d/b/a Geeknik's Lab",
+        "email": "info@geeknik-labs.com",
+        "description": "Geeknik's Lab develops and maintains open-source tools for browser extensions, automation, bug bounty hunting, AI-driven applications, and cybersecurity utilities. We focus on preserving digital freedoms and pushing the boundaries of what's possible with FOSS technologies.",
+        "webpageUrl": {
+            "url": "https://github.com/geeknik",
+            "wellKnown": ""
+        }
+    },
+    "projects": [
+        {
+            "guid": "content-aware-ad-blocker",
+            "name": "Content-Aware Ad Blocker",
+            "description": "An advanced ad blocker that uses content-awareness to block ads more effectively across websites.",
+            "webpageUrl": {
+                "url": "https://github.com/geeknik/content-aware-ad-blocker"
+            },
+            "repositoryUrl": {
+                "url": "https://github.com/geeknik/content-aware-ad-blocker"
+            },
+            "licenses": ["spdx:MIT"],
+            "tags": ["ad-blocker", "browser-extension", "privacy"]
+        },
+        {
+            "guid": "self-improving-agents",
+            "name": "Self-Improving Agents",
+            "description": "A set of autonomous agents designed to learn and improve their own performance over time.",
+            "webpageUrl": {
+                "url": "https://github.com/geeknik/self-improving-agents"
+            },
+            "repositoryUrl": {
+                "url": "https://github.com/geeknik/self-improving-agents"
+            },
+            "licenses": ["spdx:MIT"],
+            "tags": ["AI", "automation", "self-learning"]
+        },
+        {
+            "guid": "alien-space-shooter",
+            "name": "Alien Space Shooter",
+            "description": "A fun, retro-inspired space shooter game developed as an open-source project.",
+            "webpageUrl": {
+                "url": "https://github.com/geeknik/alien-space-shooter"
+            },
+            "repositoryUrl": {
+                "url": "https://github.com/geeknik/alien-space-shooter"
+            },
+            "licenses": ["spdx:MIT"],
+            "tags": ["game", "open-source", "entertainment"]
+        },
+        {
+            "guid": "bug-bounty-automation",
+            "name": "Bug Bounty Automation",
+            "description": "A set of automation tools for bug bounty hunters, aimed at making the process of discovering vulnerabilities easier.",
+            "webpageUrl": {
+                "url": "https://github.com/geeknik/bug-bounty-automation"
+            },
+            "repositoryUrl": {
+                "url": "https://github.com/geeknik/bug-bounty-automation"
+            },
+            "licenses": ["spdx:GPL-3.0"],
+            "tags": ["bug-bounty", "automation", "security"]
+        },
+        {
+            "guid": "subjs",
+            "name": "SubJS",
+            "description": "A utility for finding JavaScript files on websites, useful for bug bounty hunting and security analysis.",
+            "webpageUrl": {
+                "url": "https://github.com/geeknik/subjs"
+            },
+            "repositoryUrl": {
+                "url": "https://github.com/geeknik/subjs"
+            },
+            "licenses": ["spdx:MIT"],
+            "tags": ["bug-bounty", "JavaScript", "security"]
+        },
+        {
+            "guid": "dalle-sum",
+            "name": "DALL-E Summary",
+            "description": "A tool that generates textual summaries of visual content using the DALL-E AI model.",
+            "webpageUrl": {
+                "url": "https://github.com/geeknik/dalle-sum"
+            },
+            "repositoryUrl": {
+                "url": "https://github.com/geeknik/dalle-sum"
+            },
+            "licenses": ["spdx:MIT"],
+            "tags": ["AI", "summarization", "visual-recognition"]
+        },
+        {
+            "guid": "test-proxy",
+            "name": "Test Proxy",
+            "description": "A tool that enables the testing of proxies for speed and reliability.",
+            "webpageUrl": {
+                "url": "https://github.com/geeknik/test-proxy"
+            },
+            "repositoryUrl": {
+                "url": "https://github.com/geeknik/test-proxy"
+            },
+            "licenses": ["spdx:MIT"],
+            "tags": ["networking", "proxy", "testing"]
+        },
+        {
+            "guid": "kaygee",
+            "name": "KayGee",
+            "description": "A tool that automates key generation for cryptographic purposes.",
+            "webpageUrl": {
+                "url": "https://github.com/geeknik/kaygee"
+            },
+            "repositoryUrl": {
+                "url": "https://github.com/geeknik/kaygee"
+            },
+            "licenses": ["spdx:GPL-3.0"],
+            "tags": ["encryption", "security", "cryptography"]
+        },
+        {
+            "guid": "ai-tab-grouper",
+            "name": "AI Tab Grouper",
+            "description": "A browser extension that uses AI to intelligently group browser tabs based on content.",
+            "webpageUrl": {
+                "url": "https://github.com/geeknik/ai-tab-grouper"
+            },
+            "repositoryUrl": {
+                "url": "https://github.com/geeknik/ai-tab-grouper"
+            },
+            "licenses": ["spdx:MIT"],
+            "tags": ["AI", "browser-extension", "productivity"]
+        },
+        {
+            "guid": "cognishield",
+            "name": "Cognishield",
+            "description": "A cybersecurity tool designed to shield users from cognitive overload by filtering unwanted content.",
+            "webpageUrl": {
+                "url": "https://github.com/geeknik/cognishield"
+            },
+            "repositoryUrl": {
+                "url": "https://github.com/geeknik/cognishield"
+            },
+            "licenses": ["spdx:MIT"],
+            "tags": ["cybersecurity", "AI", "filtering"]
+        }
+    ],
+    "funding": {
+        "channels": [
+            {
+                "guid": "github-sponsors",
+                "type": "payment-provider",
+                "address": "https://github.com/sponsors/geeknik",
+                "description": "Support Geeknik's Lab via GitHub Sponsors to help fund our open-source development efforts."
+            },
+            {
+                "guid": "patreon",
+                "type": "payment-provider",
+                "address": "https://patreon.com/geeknik",
+                "description": "Support Geeknik's Lab via Patreon to help fund our open source cybersecurity operations."
+            },
+            {
+                "guid": "paypal",
+                "type": "payment-provider",
+                "address": "https://paypal.me/geeknik",
+                "description": "Contribute to the development of free, open-source software by donating through PayPal."
+            }
+        ],
+        "plans": [
+            {
+                "guid": "developer-compensation",
+                "status": "active",
+                "name": "Developer compensation",
+                "description": "Help cover the costs of developers working on key projects in Geeknik's Lab.",
+                "amount": 1000,
+                "currency": "USD",
+                "frequency": "monthly",
+                "channels": ["github-sponsors", "patreon", "paypal"]
+            },
+            {
+                "guid": "server-costs",
+                "status": "active",
+                "name": "Server hosting",
+                "description": "Support our monthly server hosting costs to keep our projects up and running.",
+                "amount": 250,
+                "currency": "USD",
+                "frequency": "monthly",
+                "channels": ["github-sponsors", "patreon", "paypal"]
+            },
+            {
+                "guid": "goodwill",
+                "status": "active",
+                "name": "Goodwill",
+                "description": "Show goodwill towards our projects.",
+                "amount": 0,
+                "currency": "USD",
+                "frequency": "monthly",
+                "channels": ["github-sponsors", "patreon", "paypal"]
+            }
+        ]
+    },
+    "legal": {
+        "privacy": "https://github.com/geeknik/geeknik/blob/main/PRIVACY.md"
+    }
+}
