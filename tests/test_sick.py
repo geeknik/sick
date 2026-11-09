@@ -29,8 +29,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def make_row(url):
-    """Return a 15-column result row like process_image produces."""
-    return [url] + ["x"] * 14
+    """Return a 16-column result row like process_image produces."""
+    return [url] + ["x"] * 15
 
 
 def make_png_bytes(color=(128, 128, 128), size=(32, 32)):
@@ -324,7 +324,7 @@ class TestProcessImageOutput:
                 mock.patch("sick.extract_exif_data", return_value=exif):
             row = sick.process_image(str(path))
         assert row is not None
-        assert len(row) == 15
+        assert len(row) == 16
         assert "hello stego world" in row       # OCR text, whitespace collapsed
         assert json.dumps(exif) in row          # EXIF surfaced as JSON
 
@@ -342,7 +342,7 @@ class TestProcessImageOutput:
                 mock.patch("sick.extract_exif_data", return_value={}):
             row = sick.process_image(str(path))
         assert row is not None
-        assert row[-2:] == ["None detected", "None"]
+        assert row[-3:] == ["None detected", "None", row[-1]]
 
 
     def test_ocr_failure_does_not_kill_row(self, tmp_path):
@@ -360,8 +360,8 @@ class TestProcessImageOutput:
                 mock.patch("sick.extract_exif_data", return_value={}):
             row = sick.process_image(str(path))
         assert row is not None
-        assert len(row) == 15
-        assert row[-2] == "None detected"
+        assert len(row) == 16
+        assert row[-3] == "None detected"
 
 
 class TestDisplayResults:
@@ -373,9 +373,9 @@ class TestDisplayResults:
         sick.display_results(rows)
         with open("results.csv", newline="", encoding="utf-8") as f:
             data = list(csv.reader(f))
-        assert data[0][-2:] == ["Extracted Text (OCR)", "EXIF Data"]
+        assert data[0][-3:] == ["Extracted Text (OCR)", "EXIF Data", "Perceptual Hash"]
         assert len(data) == 3  # header + 2 rows
-        assert all(len(r) == 15 for r in data)
+        assert all(len(r) == 16 for r in data)
 
 
 def gradient_array(height=64, width=256):
@@ -828,6 +828,92 @@ class TestOutputOption:
         with mock.patch("sick.process_local_folder", return_value=rows):
             sick.main()
         assert (tmp_path / "results.csv").exists()
+
+
+def make_poster(size=(64, 64)):
+    """Structured test image (text-like bars) with real detail."""
+    from PIL import ImageDraw
+    img = Image.new("RGB", size, (245, 245, 245))
+    draw = ImageDraw.Draw(img)
+    for y in range(4, size[1] - 4, 8):
+        draw.line([(6, y), (size[0] - 6, y)], fill=(20, 20, 20), width=2)
+    draw.rectangle([2, 2, size[0] - 3, size[1] - 3], outline=(200, 0, 0))
+    return img
+
+
+@pytest.fixture(autouse=True)
+def reset_duplicate_registry():
+    """Keep near-duplicate registry state from leaking between tests."""
+    sick.reset_duplicate_registry()
+    yield
+    sick.reset_duplicate_registry()
+
+
+class TestPerceptualHash:
+    """64-bit dHash generation and near-duplicate detection."""
+
+    def test_hamming_distance_basics(self):
+        zeros = "0" * 16
+        assert sick.hamming_distance(zeros, zeros) == 0
+        assert sick.hamming_distance(zeros, "f" * 16) == 64
+        assert sick.hamming_distance(zeros, "0" * 15 + "1") == 1
+
+    def test_perceptual_hash_is_stable_16_hex(self, tmp_path):
+        path = make_png_file(tmp_path / "a.png")
+        with Image.open(path) as first, Image.open(path) as second:
+            hash_a, hash_b = sick.perceptual_hash(first), sick.perceptual_hash(second)
+        assert hash_a == hash_b
+        assert len(hash_a) == 16
+        int(hash_a, 16)  # parses as hex
+
+    def test_perceptual_hash_survives_resize_and_brightness(self):
+        """Resized + brightened copies must stay within the dup threshold."""
+        base = make_poster()
+        bright = Image.eval(base.convert("L"), lambda v: min(255, int(v * 1.3))).convert("RGB")
+        big = bright.resize((128, 128))
+        distance = sick.hamming_distance(sick.perceptual_hash(base), sick.perceptual_hash(big))
+        assert distance <= 10
+
+    def test_perceptual_hash_separates_different_images(self):
+        rng = np.random.default_rng(1)
+        noise = Image.fromarray(rng.integers(0, 256, (64, 64, 3), dtype=np.uint8), "RGB")
+        distance = sick.hamming_distance(
+            sick.perceptual_hash(make_poster()), sick.perceptual_hash(noise))
+        assert distance > 20
+
+    def _process(self, tmp_path, img, name):
+        path = tmp_path / name
+        img.save(path)
+        with mock.patch("sick.initialize_nude_detector"), \
+                mock.patch("sick.get_dominant_color", return_value=(1, 2, 3)), \
+                mock.patch("sick.detect_faces", return_value=False), \
+                mock.patch("sick.detect_steganography", return_value=(False, 0.0, None)), \
+                mock.patch("sick.detect_age", return_value=None), \
+                mock.patch("sick.detect_ai_generated", return_value=(False, 0.1)), \
+                mock.patch("sick.detect_potential_child_exploitation", return_value=(False, None)), \
+                mock.patch("sick.detect_nudity", return_value={"result": [], "score": 0}), \
+                mock.patch("sick.extract_text_from_image", return_value=""), \
+                mock.patch("sick.extract_exif_data", return_value={}):
+            return sick.process_image(str(path))
+
+    def test_near_duplicate_flagged_in_row(self, tmp_path):
+        first = self._process(tmp_path, make_poster(), "one.png")
+        resized = make_poster().resize((128, 128))
+        second = self._process(tmp_path, resized, "two.png")
+        assert first is not None and second is not None
+        assert len(first) == 16 and len(second) == 16
+        assert "near-duplicate" not in first[-1]
+        assert "near-duplicate" in second[-1]
+        assert "one.png" in second[-1]
+
+    def test_distinct_images_not_flagged(self, tmp_path):
+        rng = np.random.default_rng(2)
+        noise = Image.fromarray(rng.integers(0, 256, (64, 64, 3), dtype=np.uint8), "RGB")
+        first = self._process(tmp_path, make_poster(), "poster.png")
+        second = self._process(tmp_path, noise, "noise.png")
+        assert first is not None and second is not None
+        assert "near-duplicate" not in first[-1]
+        assert "near-duplicate" not in second[-1]
 
 
 class TestImageHelpers:

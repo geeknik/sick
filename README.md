@@ -8,7 +8,7 @@ SiCK (Suspicious Image Collection Kit) is a Python tool designed for analyzing i
 
 ## Features
 - Crawls a user-defined URL & depth with a page cap, visited-page tracking, and image de-duplication across pages; crawl scope is anchored to the start URL's host (redirected landings have their images analyzed, but foreign links are never followed)
-- Image Hash Generation
+- Image hashing: exact-content MD5 plus 64-bit dHash perceptual hashing with near-duplicate detection across a scan (resize/recompress/brightness-tolerant; crops, mirrors and rotations are not matched)
 - OCR text extraction with pytesseract
 - EXIF data extraction
 - Face detection with OpenCV
