@@ -272,15 +272,105 @@ def extract_text_from_image(pil_image):
     text = pytesseract.image_to_string(pil_image)
     return text
 
+def _ratio_to_float(value):
+    """Convert an EXIF rational (IFDRational, Fraction or (num, den)) to float."""
+    if isinstance(value, (tuple, list)):
+        if len(value) == 2:
+            num, den = value
+            return float(num) / float(den) if den else 0.0
+        raise ValueError(f"unexpected rational shape: {value!r}")
+    return float(value)
+
+
+def _gps_ref_char(value):
+    """Normalize a GPS hemisphere ref to 'N'/'S'/'E'/'W'; None if unreadable."""
+    if isinstance(value, (bytes, bytearray)):
+        value = value.decode('ascii', errors='replace') if value else ''
+    text = str(value).strip().upper()
+    return text[:1] if text in ('N', 'S', 'E', 'W') else None
+
+
+def _decode_gps(gps_info):
+    """Decode a GPSInfo IFD dict into analyst-readable entries.
+
+    Returns {} when coordinates are absent or the hemisphere refs are
+    missing-or-unrecognizable (a wrong hemisphere is a >100 km error --
+    fail closed rather than guess).  Latitude and longitude convert from
+    degrees/minutes/seconds rationals to signed decimal degrees (S/W
+    negative); altitude is best-effort and never costs the position.
+    """
+    decoded = {}
+    try:
+        def dms_to_decimal(value):
+            parts = [_ratio_to_float(part) for part in value]
+            while len(parts) < 3:
+                parts.append(0.0)
+            return parts[0] + parts[1] / 60.0 + parts[2] / 3600.0
+
+        lat_ref = _gps_ref_char(gps_info.get(1))
+        lon_ref = _gps_ref_char(gps_info.get(3))
+        if lat_ref not in ('N', 'S') or lon_ref not in ('E', 'W'):
+            return {}
+        latitude = dms_to_decimal(gps_info[2])       # GPSLatitude
+        if lat_ref == 'S':
+            latitude = -latitude
+        longitude = dms_to_decimal(gps_info[4])      # GPSLongitude
+        if lon_ref == 'W':
+            longitude = -longitude
+        decoded['GPSPosition'] = f"{latitude:.6f}, {longitude:.6f}"
+    except (KeyError, TypeError, ValueError, ZeroDivisionError, IndexError):
+        return {}
+
+    try:
+        if 6 in gps_info:                            # GPSAltitude
+            altitude = _ratio_to_float(gps_info[6])
+            ref = gps_info.get(5, 0)                 # GPSAltitudeRef (often bytes)
+            if isinstance(ref, (bytes, bytearray)):
+                ref = ref[0] if ref else 0
+            if int(ref) == 1:                        # 1 = below sea level
+                altitude = -altitude
+            decoded['GPSAltitude'] = f"{altitude:.1f}m"
+    except (KeyError, TypeError, ValueError, ZeroDivisionError, IndexError):
+        pass  # altitude is optional; keep the position
+    return decoded
+
+
 # Function to extract EXIF data from an image
 def extract_exif_data(pil_image):
+    """Extract analyst-readable EXIF metadata from a PIL image.
+
+    GPS coordinates are decoded to signed decimal degrees and placed FIRST
+    in the result (so they survive the report cell's truncation), Exif-IFD
+    sub-tags (DateTimeOriginal, ExposureTime, ...) are merged in, raw IFD
+    offsets are never emitted, and MakerNote blobs are abbreviated.
+    """
     exif_data = {}
     if hasattr(pil_image, 'getexif'):
         exif_info = pil_image.getexif()
         if exif_info is not None:
             for tag, value in exif_info.items():
+                if tag in (34665, 34853):  # ExifIFD / GPSInfo pointer offsets
+                    continue               # expanded below
                 decoded = ExifTags.TAGS.get(tag, tag)
+                if tag == 37500:           # MakerNote: binary blob
+                    exif_data[decoded] = str(value)[:40]
+                    continue
                 exif_data[decoded] = value
+            try:
+                for tag, value in dict(exif_info.get_ifd(0x8769)).items():
+                    if tag in (40965, 34853):  # nested IFD pointers
+                        continue
+                    if tag == 37500:           # MakerNote usually lives HERE
+                        exif_data.setdefault('MakerNote', str(value)[:40])
+                        continue
+                    # setdefault: top-level IFD0 wins on name collisions
+                    exif_data.setdefault(ExifTags.TAGS.get(tag, str(tag)), value)
+            except Exception as e:
+                logger.debug(f"Exif IFD expansion failed: {e}")
+            gps = _decode_gps(dict(exif_info.get_ifd(34853) or {}))
+            if gps:
+                # position first so the 300-char report cell keeps it
+                exif_data = {**gps, **exif_data}
     return exif_data
 
 # Function to detect faces in an image

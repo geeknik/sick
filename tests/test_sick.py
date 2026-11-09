@@ -943,6 +943,120 @@ class TestPerceptualHash:
         assert sick.find_or_register_duplicate(poster_hash, "probe2") is None
 
 
+def jpeg_with_gps(path, lat_ref="N", lon_ref="W", altitude_ref=None, makernote=None):
+    """Write a JPEG carrying GPS coordinates and an Exif IFD."""
+    from PIL.TiffImagePlugin import IFDRational
+
+    def dms(parts):
+        return tuple(tuple(IFDRational(n, d) for n, d in parts))
+
+    exif = Image.Exif()
+    gps = {
+        1: lat_ref,
+        2: dms(((51, 1), (30, 1), (741, 100))),
+        3: lon_ref,
+        4: dms(((0, 1), (12, 1), (0, 1))),
+        6: IFDRational(25, 2),
+    }
+    if altitude_ref is not None:
+        gps[5] = altitude_ref
+    exif[34853] = gps
+    sub = exif.get_ifd(0x8769)
+    sub[36867] = "2024:01:01 10:00:00"  # DateTimeOriginal
+    if makernote:
+        sub[37500] = makernote
+    Image.new("RGB", (16, 16), (10, 20, 30)).save(path, "JPEG", exif=exif.tobytes())
+    return path
+
+
+class TestExifExtraction:
+    """EXIF decoding: GPS coordinates and Exif-IFD tags must surface."""
+
+    def test_gps_decoded_to_decimal_degrees(self, tmp_path):
+        path = jpeg_with_gps(tmp_path / "geo.jpg")
+        with Image.open(path) as img:
+            data = sick.extract_exif_data(img)
+        assert "GPSPosition" in data
+        assert list(data)[0] == "GPSPosition"  # first: survives 300-char truncation
+        lat_text, lon_text = data["GPSPosition"].split(", ")
+        assert abs(float(lat_text) - 51.502058) < 1e-4  # 51 deg 30' 7.41"
+        assert abs(float(lon_text) - -0.2) < 1e-4       # 0 deg 12' W
+        assert data.get("GPSAltitude") == "12.5m"
+
+    def test_gps_south_east_refs(self, tmp_path):
+        path = jpeg_with_gps(tmp_path / "geo.jpg", lat_ref="S", lon_ref="E")
+        with Image.open(path) as img:
+            data = sick.extract_exif_data(img)
+        lat_text, lon_text = data["GPSPosition"].split(", ")
+        assert float(lat_text) < 0 < float(lon_text)
+
+    def test_exif_ifd_tags_surfaced(self, tmp_path):
+        path = jpeg_with_gps(tmp_path / "geo.jpg")
+        with Image.open(path) as img:
+            data = sick.extract_exif_data(img)
+        assert data.get("DateTimeOriginal") == "2024:01:01 10:00:00"
+        assert "GPSInfo" not in data and "ExifOffset" not in data  # no raw pointers
+
+    def test_malformed_gps_returns_no_position(self):
+        # pylint: disable=protected-access; unit-testing the decoder directly
+        assert sick._decode_gps({1: "N", 2: "garbage", 3: "W", 4: None}) == {}
+
+    def test_altitude_ref_bytes_do_not_kill_position(self, tmp_path):
+        """Real Pillow round-trips GPSAltitudeRef as BYTES; position must survive."""
+        path = jpeg_with_gps(tmp_path / "geo.jpg", altitude_ref=1)
+        with Image.open(path) as img:
+            data = sick.extract_exif_data(img)
+        assert "GPSPosition" in data
+        assert data.get("GPSAltitude") == "-12.5m"  # below sea level
+
+    def test_bad_altitude_keeps_position(self):
+        # pylint: disable=protected-access; unit-testing the decoder directly
+        decoded = sick._decode_gps({
+            1: "N", 2: ((51, 1), (30, 1), (0, 1)),
+            3: "W", 4: ((0, 1), (12, 1), (0, 1)),
+            6: "garbage",
+        })
+        assert "GPSPosition" in decoded
+        assert "GPSAltitude" not in decoded
+
+    def test_bytes_hemisphere_ref(self):
+        # pylint: disable=protected-access; unit-testing the decoder directly
+        decoded = sick._decode_gps({
+            1: b"S", 2: ((10, 1), (0, 1), (0, 1)),
+            3: b"E", 4: ((20, 1), (0, 1), (0, 1)),
+        })
+        assert decoded["GPSPosition"] == "-10.000000, 20.000000"
+
+    def test_unrecognizable_hemisphere_fails_closed(self):
+        # pylint: disable=protected-access; wrong-hemisphere is worse than none
+        assert sick._decode_gps({
+            1: "X", 2: ((10, 1), (0, 1), (0, 1)),
+            3: "E", 4: ((20, 1), (0, 1), (0, 1)),
+        }) == {}
+
+    def test_makernote_in_subifd_is_abbreviated(self, tmp_path):
+        path = jpeg_with_gps(tmp_path / "geo.jpg", makernote="M" * 800)
+        with Image.open(path) as img:
+            data = sick.extract_exif_data(img)
+        makernote_value = str(data.get("MakerNote", ""))
+        assert "MMMM" not in makernote_value or len(makernote_value) <= 40
+
+    def test_row_contains_decoded_gps(self, tmp_path):
+        path = jpeg_with_gps(tmp_path / "geo.jpg")
+        with mock.patch("sick.initialize_nude_detector"), \
+                mock.patch("sick.get_dominant_color", return_value=(1, 2, 3)), \
+                mock.patch("sick.detect_faces", return_value=False), \
+                mock.patch("sick.detect_steganography", return_value=(False, 0.0, None)), \
+                mock.patch("sick.detect_age", return_value=None), \
+                mock.patch("sick.detect_ai_generated", return_value=(False, 0.1)), \
+                mock.patch("sick.detect_potential_child_exploitation", return_value=(False, None)), \
+                mock.patch("sick.detect_nudity", return_value={"result": [], "score": 0}), \
+                mock.patch("sick.extract_text_from_image", return_value=""):
+            row = sick.process_image(str(path))
+        assert row is not None
+        assert "GPSPosition" in row[-2]
+
+
 class TestImageHelpers:
     """Characterization tests for the pure image-analysis helpers."""
 
