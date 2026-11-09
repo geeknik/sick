@@ -1158,6 +1158,8 @@ class TestFaceDetection:
             def detectMultiScale(self, _image, **_kwargs):  # pylint: disable=invalid-name
                 result = answers[min(self.calls, len(answers) - 1)]
                 self.calls += 1
+                if not result:
+                    return ()  # real cv2 returns an empty tuple, not an array
                 return np.array(result, dtype=int).reshape(-1, 4)
 
         return Cascade()
@@ -1190,7 +1192,8 @@ class TestFaceDetection:
 
     def test_cascades_loaded_once_across_calls(self):
         # pylint: disable=protected-access; cache is the unit under test
-        sick._face_cascades.clear()
+        saved_cache = sick._face_cascades
+        sick._face_cascades = {}
         constructions = []
 
         class CountingCascade:
@@ -1203,11 +1206,14 @@ class TestFaceDetection:
             def detectMultiScale(self, _image, **_kwargs):  # pylint: disable=invalid-name
                 return np.array([], dtype=int).reshape(0, 4)
 
-        with mock.patch("sick.cv2.CascadeClassifier", CountingCascade):
-            sick.detect_faces(Image.new("RGB", (64, 64), (5, 5, 5)))
-            sick.detect_faces(Image.new("RGB", (64, 64), (5, 5, 5)))
-        assert len(constructions) == 2  # one frontal + one profile, cached
-        assert any("profileface" in path for path in constructions)
+        try:
+            with mock.patch("sick.cv2.CascadeClassifier", CountingCascade):
+                sick.detect_faces(Image.new("RGB", (64, 64), (5, 5, 5)))
+                sick.detect_faces(Image.new("RGB", (64, 64), (5, 5, 5)))
+            assert len(constructions) == 2  # one frontal + one profile, cached
+            assert any("profileface" in path for path in constructions)
+        finally:
+            sick._face_cascades = saved_cache  # restore for later tests
 
 
 class TestImageHelpers:

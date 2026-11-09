@@ -417,7 +417,10 @@ def _load_face_cascade(name):
     """Load (and cache) one of OpenCV's bundled haar cascades."""
     with _face_cascade_lock:
         if name not in _face_cascades:
-            _face_cascades[name] = cv2.CascadeClassifier(cv2.data.haarcascades + name)
+            cascade = cv2.CascadeClassifier(cv2.data.haarcascades + name)
+            if cascade.empty():
+                logger.error(f"Error loading face cascade classifier: {name}")
+            _face_cascades[name] = cascade
         return _face_cascades[name]
 
 
