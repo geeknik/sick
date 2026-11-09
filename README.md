@@ -51,8 +51,6 @@ python sick.py -f [FOLDER] (-v)
 - `DEPTH`: Depth for web crawling (optional, default 1)
 - `VERBOSE`: enable debug logging (optional)
 
-![Screenshot_09:34:17_12-04-2024](https://github.com/geeknik/sick/assets/466878/ae52d61a-f37a-47f1-8b33-76368fba3105)
-
 ## Contributing
 
 Contributions to SiCK are welcome.
