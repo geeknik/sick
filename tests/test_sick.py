@@ -1269,6 +1269,72 @@ class TestAgeEstimation:
             "irrelevant.jpg", actions=['age'], enforce_detection=False, silent=True)
 
 
+class TestNudityDetection:
+    """Nudity classes must match NudeNet v3's actual vocabulary."""
+
+    V3_EXPOSED_CLASSES = {
+        "ANUS_EXPOSED", "BUTTOCKS_EXPOSED", "FEMALE_BREAST_EXPOSED",
+        "FEMALE_GENITALIA_EXPOSED", "MALE_BREAST_EXPOSED", "MALE_GENITALIA_EXPOSED",
+    }
+
+    def test_filter_covers_all_v3_exposed_classes(self):
+        # v2-style names (EXPOSED_BREAST &c.) match nothing on nudenet >= 3
+        assert self.V3_EXPOSED_CLASSES <= sick.NUDITY_CLASSES
+        assert "EXPOSED_BREAST" not in sick.NUDITY_CLASSES  # dead v2 name
+
+    @staticmethod
+    def _detector_returning(detections):
+        detector = mock.MagicMock()
+        detector.detect.return_value = detections
+        return detector
+
+    def test_flags_breast_detection(self):
+        detector = self._detector_returning(
+            [{"class": "FEMALE_BREAST_EXPOSED", "score": 0.9}])
+        with mock.patch("sick.nude_detector", detector):
+            result = sick.detect_nudity("image.png")
+        assert result["score"] == 0.9
+        assert len(result["result"]) == 1
+
+    def test_ignores_covered_classes(self):
+        detector = self._detector_returning(
+            [{"class": "FEMALE_BREAST_COVERED", "score": 0.9}])
+        with mock.patch("sick.nude_detector", detector):
+            result = sick.detect_nudity("image.png")
+        assert result["score"] == 0 and result["result"] == []
+
+    def test_ignores_low_confidence_detections(self):
+        detector = self._detector_returning(
+            [{"class": "ANUS_EXPOSED", "score": 0.3}])
+        with mock.patch("sick.nude_detector", detector):
+            result = sick.detect_nudity("image.png")
+        assert result["score"] == 0
+
+    def test_nudity_cell_is_compact_single_line(self, tmp_path):
+        path = make_png_file(tmp_path / "photo.png")
+        detections = [
+            {"class": "FEMALE_BREAST_EXPOSED", "score": 0.91},
+            {"class": "BUTTOCKS_EXPOSED", "score": 0.72},
+        ]
+        with mock.patch("sick.initialize_nude_detector"), \
+                mock.patch("sick.get_dominant_color", return_value=(1, 2, 3)), \
+                mock.patch("sick.detect_faces", return_value=0), \
+                mock.patch("sick.detect_steganography", return_value=(False, 0.0, None)), \
+                mock.patch("sick.detect_age", return_value=None), \
+                mock.patch("sick.detect_ai_generated", return_value=(False, 0.1)), \
+                mock.patch("sick.detect_potential_child_exploitation", return_value=(False, None)), \
+                mock.patch("sick.detect_nudity",
+                           return_value={"result": detections, "score": 0.91}), \
+                mock.patch("sick.extract_text_from_image", return_value=""), \
+                mock.patch("sick.extract_exif_data", return_value={}):
+            row = sick.process_image(str(path))
+        assert row is not None
+        assert "\n" not in row[4]
+        assert "FEMALE_BREAST_EXPOSED:0.91" in row[4]
+        assert "BUTTOCKS_EXPOSED:0.72" in row[4]
+        assert "(Score: 0.91)" in row[4]
+
+
 class TestImageHelpers:
     """Characterization tests for the pure image-analysis helpers."""
 

@@ -176,6 +176,17 @@ def lsb_plane_compression_ratio(np_img):
         return 0.0
     return len(zlib.compress(raw, 9)) / len(raw)
 
+# NudeNet v3 detector classes that indicate exposed nudity.  The v2-era
+# prefix names previously used here (EXPOSED_BREAST, EXPOSED_ANUS, ...)
+# match nothing on nudenet >= 3.0 -- breast/buttocks/anus nudity was
+# silently reported as score 0.
+NUDITY_CLASSES = frozenset({
+    'ANUS_EXPOSED', 'BUTTOCKS_EXPOSED', 'FEMALE_BREAST_EXPOSED',
+    'FEMALE_GENITALIA_EXPOSED', 'MALE_BREAST_EXPOSED', 'MALE_GENITALIA_EXPOSED',
+})
+NUDITY_DETECTION_THRESHOLD = 0.5
+
+
 # Function to detect nudity in an image
 def detect_nudity(image_path):
     try:
@@ -184,13 +195,10 @@ def detect_nudity(image_path):
             return {"result": "GIF images are not supported for nudity detection", "score": 0}
 
         detections = nude_detector.detect(image_path)
-        nudity_related_classes = {
-            'EXPOSED_ANUS', 'EXPOSED_BUTTOCKS', 'EXPOSED_BREAST',
-            'EXPOSED_GENITALIA', 'MALE_GENITALIA_EXPOSED', 'FEMALE_GENITALIA_EXPOSED'
-        }
         nudity_detections = [
             detection for detection in detections
-            if detection.get('class') in nudity_related_classes and detection.get('score', 0) >= 0.5
+            if detection.get('class') in NUDITY_CLASSES
+            and detection.get('score', 0) >= NUDITY_DETECTION_THRESHOLD
         ]
 
         # Calculate overall nudity score
@@ -1003,7 +1011,7 @@ def process_image(image_path):
                     hidden_text = None
                 except Exception as e:
                     logger.warning(f"GIF frame analysis failed for {image_path}: {e}")
-                    nudity_results = {"result": ["GIF frame extraction failed"], "score": 0.0}
+                    nudity_results = {"result": "GIF frame extraction failed", "score": 0.0}
                     dominant_color = 'N/A'
                     faces_found = 0
                     age_estimation = 'N/A'
@@ -1033,6 +1041,20 @@ def process_image(image_path):
             ocr_text = ' '.join(detected_text.split())[:200] if detected_text and detected_text.strip() else "None detected"
             exif_summary = json.dumps(exif_info, default=str)[:300] if exif_info else "None"
 
+            # Compact single-line nudity cell (the old json.dumps(indent=2)
+            # spilled multiline JSON across the table and CSV rows)
+            raw_detections = nudity_results['result']
+            if isinstance(raw_detections, str):
+                nudity_cell = raw_detections
+            elif raw_detections:
+                summary = ", ".join(
+                    f"{d.get('class')}:{d.get('score', 0):.2f}"
+                    if isinstance(d, dict) else str(d)
+                    for d in raw_detections[:4])
+                nudity_cell = f"{summary} (Score: {nudity_results['score']:.2f})"
+            else:
+                nudity_cell = f"None detected (Score: {nudity_results['score']:.2f})"
+
             # Near-duplicate detection against every image seen this scan
             phash_cell = phash if phash else "N/A"
             if phash:
@@ -1046,7 +1068,7 @@ def process_image(image_path):
                 image_hash,
                 str(dominant_color),
                 str(faces_found),
-                f"{json.dumps(nudity_results['result'], indent=2)} (Score: {nudity_results['score']:.2f})",
+                nudity_cell,
                 f"{'Yes' if stego_detected else 'No'} (Score: {stego_score:.2f})" if stego_score is not None else "N/A",
                 str(age_estimation),
                 hidden_text if hidden_text else "None detected",
