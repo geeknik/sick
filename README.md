@@ -13,7 +13,7 @@ SiCK (Suspicious Image Collection Kit) is a Python tool designed for analyzing i
 - EXIF data extraction
 - Face detection with OpenCV
 - Nudity detection with NudeNet
-- Per-frame analysis of GIF animations (nudity on up to 4 frames sampled across the animation, plus faces, age estimation and dominant color on the first frame)
+- Per-frame analysis of GIF animations (nudity on up to 4 frames sampled across the animation, plus faces, age estimation and dominant color on the first frame; the Duration column reports the per-frame delay in ms, not total animation time)
 - Age estimation with DeepFace
 - Determines dominant color
 - Detects LSB steganography via RS analysis (Fridrich et al. 2001) and WS analysis (Ker & Böhme 2008) with quantitative payload-rate estimation

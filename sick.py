@@ -645,12 +645,16 @@ def extract_gif_frames(image_path, max_frames=4):
     already-extracted files are removed before the error propagates.
     Caller must remove the returned files.
     """
+    if max_frames < 1:
+        raise ValueError("max_frames must be at least 1")
     frame_paths = []
     try:
         with Image.open(image_path) as gif:
             total = getattr(gif, "n_frames", 1)
             if total <= max_frames:
                 indices = list(range(total))
+            elif max_frames == 1:
+                indices = [(total - 1) // 2]
             else:
                 indices = sorted({round(i * (total - 1) / (max_frames - 1))
                                   for i in range(max_frames)})
@@ -744,9 +748,12 @@ def process_image(image_path):
                             f"Nudity score: {nudity_results['score']}")
                     else:
                         child_exploitation_detected, child_exploitation_details = False, None
-                    with Image.open(image_path) as gif:
-                        frame_count = getattr(gif, 'n_frames', 1)
-                        duration = gif.info.get('duration', 'N/A')
+                    # img_obj is the still-open handle from the top of
+                    # process_image; reuse it rather than reopening the file
+                    frame_count = getattr(img_obj, 'n_frames', 1)
+                    # info['duration'] is the per-frame delay in ms, not the
+                    # total animation time
+                    duration = img_obj.info.get('duration', 'N/A')
                     ai_generated, ai_score = False, None
                     hidden_text = None
                 except Exception as e:

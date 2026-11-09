@@ -654,6 +654,26 @@ class TestGifAnalysis:
         assert "0.95" in row[12]                    # worst-frame score cited
 
 
+    def test_extract_gif_frames_max_one_samples_middle_frame(self, tmp_path):
+        """A single-frame sample takes the middle of the animation."""
+        grays = [Image.new("L", (8, 8), i * 30) for i in range(8)]
+        gif = tmp_path / "gradual.gif"
+        grays[0].save(gif, save_all=True, append_images=grays[1:], duration=100, loop=0)
+        frames = sick.extract_gif_frames(str(gif), max_frames=1)
+        try:
+            assert len(frames) == 1
+            with Image.open(frames[0]) as img:
+                assert img.getpixel((0, 0))[0] == 3 * 30  # middle frame index 3
+        finally:
+            for frame_path in frames:
+                Path(frame_path).unlink(missing_ok=True)
+
+    def test_extract_gif_frames_rejects_invalid_max_frames(self, tmp_path):
+        gif = make_gif(tmp_path / "anim.gif", n_frames=3)
+        with pytest.raises(ValueError):
+            sick.extract_gif_frames(str(gif), max_frames=0)
+
+
 class TestImageHelpers:
     """Characterization tests for the pure image-analysis helpers."""
 
