@@ -409,30 +409,60 @@ def extract_exif_data(pil_image):
                 exif_data = {**gps, **exif_data}
     return exif_data
 
+_face_cascades = {}
+_face_cascade_lock = threading.Lock()
+
+
+def _load_face_cascade(name):
+    """Load (and cache) one of OpenCV's bundled haar cascades."""
+    with _face_cascade_lock:
+        if name not in _face_cascades:
+            _face_cascades[name] = cv2.CascadeClassifier(cv2.data.haarcascades + name)
+        return _face_cascades[name]
+
+
+def _iou(box_a, box_b):
+    """Intersection-over-union of two (x, y, w, h) boxes."""
+    ax, ay, aw, ah = box_a
+    bx, by, bw, bh = box_b
+    x1, y1 = max(ax, bx), max(ay, by)
+    x2, y2 = min(ax + aw, bx + bw), min(ay + ah, by + bh)
+    intersection = max(0, x2 - x1) * max(0, y2 - y1)
+    union = aw * ah + bw * bh - intersection
+    return intersection / union if union else 0.0
+
+
 # Function to detect faces in an image
 def detect_faces(pil_image):
+    """Count faces across frontal and BOTH profile orientations.
+
+    The frontal cascade is one-sided: profile faces are detected with the
+    profile cascade, and the opposite profile by running it again on the
+    horizontally flipped image (boxes translated back).  Detections from
+    the three passes overlapping by IoU >= 0.5 count as one face.
+    Returns an integer count (0 on error).
+    """
     try:
-        cv_image = np.array(pil_image)
-        if len(cv_image.shape) == 2:
-            gray_image = cv_image
-        elif len(cv_image.shape) == 3:
-            if cv_image.shape[2] == 4:
-                cv_image = cv2.cvtColor(cv_image, cv2.COLOR_RGBA2RGB)
-            gray_image = cv2.cvtColor(cv_image, cv2.COLOR_RGB2GRAY)
-        else:
-            logger.warning(f"Unexpected image shape: {cv_image.shape}")
-            return False
+        gray = cv2.cvtColor(np.array(pil_image.convert('RGB')), cv2.COLOR_RGB2GRAY)
+        width = gray.shape[1]
+        detect_kwargs = {'scaleFactor': 1.1, 'minNeighbors': 5, 'minSize': (30, 30)}
+        frontal = _load_face_cascade('haarcascade_frontalface_default.xml')
+        profile = _load_face_cascade('haarcascade_profileface.xml')
 
-        face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-        if face_cascade.empty():
-            logger.error("Error loading face cascade classifier")
-            return False
+        detections = list(frontal.detectMultiScale(gray, **detect_kwargs))
+        detections.extend(profile.detectMultiScale(gray, **detect_kwargs))
+        flipped = cv2.flip(gray, 1)
+        for (x, y, w, h) in profile.detectMultiScale(flipped, **detect_kwargs):
+            detections.append((width - int(x) - int(w), int(y), int(w), int(h)))
 
-        faces = face_cascade.detectMultiScale(gray_image, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
-        return len(faces) > 0
+        counted = []
+        for box in detections:
+            if all(_iou(box, other) < 0.5 for other in counted):
+                counted.append(box)
+        return len(counted)
     except Exception as e:
         logger.error(f"Error in face detection: {e}")
-        return False
+        return 0
 
 # Function to download an image with a random user agent
 def download_image(url):
@@ -924,7 +954,7 @@ def process_image(image_path):
                             faces_found = detect_faces(frame_img)
                     else:
                         dominant_color = 'N/A'
-                        faces_found = False
+                        faces_found = 0
                     frame_age = detect_age(first_frame) if faces_found and first_frame else None
                     age_estimation = frame_age if frame_age is not None else 'N/A'
                     stego_detected, stego_score = False, None
@@ -951,7 +981,7 @@ def process_image(image_path):
                     logger.warning(f"GIF frame analysis failed for {image_path}: {e}")
                     nudity_results = {"result": ["GIF frame extraction failed"], "score": 0.0}
                     dominant_color = 'N/A'
-                    faces_found = False
+                    faces_found = 0
                     age_estimation = 'N/A'
                     stego_detected, stego_score = False, None
                     hidden_text = None
@@ -991,7 +1021,7 @@ def process_image(image_path):
                 original_url or image_path,
                 image_hash,
                 str(dominant_color),
-                "Yes" if faces_found is True else "No" if faces_found is False else faces_found,
+                str(faces_found),
                 f"{json.dumps(nudity_results['result'], indent=2)} (Score: {nudity_results['score']:.2f})",
                 f"{'Yes' if stego_detected else 'No'} (Score: {stego_score:.2f})" if stego_score is not None else "N/A",
                 str(age_estimation),

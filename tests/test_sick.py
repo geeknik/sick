@@ -1122,6 +1122,94 @@ class TestOcrExtraction:
         assert text == "GOOD"
 
 
+class TestFaceDetection:
+    """Face detection: count, profile orientations, dedupe, caching."""
+
+    def test_solid_image_returns_integer_zero(self):
+        count = sick.detect_faces(Image.new("RGB", (64, 64), (0, 128, 255)))
+        assert isinstance(count, int) and not isinstance(count, bool)
+        assert count == 0
+
+    def test_face_count_rendered_in_row(self, tmp_path):
+        path = make_png_file(tmp_path / "photo.png")
+        with mock.patch("sick.initialize_nude_detector"), \
+                mock.patch("sick.get_dominant_color", return_value=(1, 2, 3)), \
+                mock.patch("sick.detect_faces", return_value=3), \
+                mock.patch("sick.detect_steganography", return_value=(False, 0.0, None)), \
+                mock.patch("sick.detect_age", return_value=None), \
+                mock.patch("sick.detect_ai_generated", return_value=(False, 0.1)), \
+                mock.patch("sick.detect_potential_child_exploitation", return_value=(False, None)), \
+                mock.patch("sick.detect_nudity", return_value={"result": [], "score": 0}), \
+                mock.patch("sick.extract_text_from_image", return_value=""), \
+                mock.patch("sick.extract_exif_data", return_value={}):
+            row = sick.process_image(str(path))
+        assert row is not None
+        assert row[3] == "3"
+
+    @staticmethod
+    def _cascade(answers):
+        """A cascade mock whose detectMultiScale returns answers per call."""
+        class Cascade:
+            """Mock of cv2's cascade answering per detectMultiScale call."""
+
+            def __init__(self):
+                self.calls = 0
+
+            def detectMultiScale(self, _image, **_kwargs):  # pylint: disable=invalid-name
+                result = answers[min(self.calls, len(answers) - 1)]
+                self.calls += 1
+                return np.array(result, dtype=int).reshape(-1, 4)
+
+        return Cascade()
+
+    def test_overlapping_detections_counted_once(self):
+        """Frontal and profile boxes at the same spot are one face."""
+        frontal = self._cascade([[[10, 10, 60, 60]]])
+        profile = self._cascade([[[12, 12, 58, 58]], []])  # unflipped hit, flipped none
+        with mock.patch("sick._load_face_cascade",
+                        side_effect=lambda name: frontal if "frontal" in name else profile):
+            assert sick.detect_faces(Image.new("RGB", (200, 200), (128, 128, 128))) == 1
+
+    def test_disjoint_detections_counted_separately(self):
+        frontal = self._cascade([[[10, 10, 60, 60]]])
+        profile = self._cascade([[[120, 120, 50, 50]], []])
+        with mock.patch("sick._load_face_cascade",
+                        side_effect=lambda name: frontal if "frontal" in name else profile):
+            assert sick.detect_faces(Image.new("RGB", (200, 200), (128, 128, 128))) == 2
+
+    def test_flipped_profile_box_translated_back(self):
+        """A flipped-profile hit must land on the original coordinates.
+
+        A face at flipped x=100 in a 200px image is at x=50 originally;
+        an exact-overlap frontal box there proves the translation."""
+        frontal = self._cascade([[[50, 20, 50, 50]]])
+        profile = self._cascade([[], [[100, 20, 50, 50]]])  # none unflipped, hit flipped
+        with mock.patch("sick._load_face_cascade",
+                        side_effect=lambda name: frontal if "frontal" in name else profile):
+            assert sick.detect_faces(Image.new("RGB", (200, 200), (128, 128, 128))) == 1
+
+    def test_cascades_loaded_once_across_calls(self):
+        # pylint: disable=protected-access; cache is the unit under test
+        sick._face_cascades.clear()
+        constructions = []
+
+        class CountingCascade:
+            """Mock recording each CascadeClassifier construction."""
+
+            def __init__(self, path):
+                constructions.append(path)
+                self.empty = mock.MagicMock(return_value=False)
+
+            def detectMultiScale(self, _image, **_kwargs):  # pylint: disable=invalid-name
+                return np.array([], dtype=int).reshape(0, 4)
+
+        with mock.patch("sick.cv2.CascadeClassifier", CountingCascade):
+            sick.detect_faces(Image.new("RGB", (64, 64), (5, 5, 5)))
+            sick.detect_faces(Image.new("RGB", (64, 64), (5, 5, 5)))
+        assert len(constructions) == 2  # one frontal + one profile, cached
+        assert any("profileface" in path for path in constructions)
+
+
 class TestImageHelpers:
     """Characterization tests for the pure image-analysis helpers."""
 
@@ -1256,7 +1344,7 @@ class TestImageHelpers:
 
     def test_detect_faces_on_solid_image(self):
         img = Image.new("RGB", (64, 64), (0, 128, 255))
-        assert sick.detect_faces(img) is False
+        assert sick.detect_faces(img) == 0
 
     @pytest.mark.skipif(shutil.which("tesseract") is None, reason="tesseract binary not installed")
     def test_extract_text_from_image_returns_string(self, tmp_path):
