@@ -44,13 +44,16 @@ python -m pytest tests/
 ## Usage
 Run SiCK against a URL or a local folder:
 ```bash
-python sick.py -u [URL] (-d [DEPTH]) (-v)
-python sick.py -f [FOLDER] (-v)
+python sick.py -u [URL] (-d [DEPTH]) (-o [OUTPUT]) (-v)
+python sick.py -f [FOLDER] (-o [OUTPUT]) (-v)
 ```
 - `URL`: The URL to start crawling (required, unless `-f` is used)
 - `FOLDER`: Local folder to scan for images (required, unless `-u` is used)
 - `DEPTH`: Depth for web crawling (optional, default 1)
+- `OUTPUT`: path for the CSV report (optional, default `results.csv` in the current directory)
 - `VERBOSE`: enable debug logging (optional)
+
+CSV cells that could execute as formulas when opened in a spreadsheet (leading `=`, `+`, `-`, `@`) are neutralized with an apostrophe prefix.
 
 ## Contributing
 

@@ -900,7 +900,25 @@ def process_local_folder(folder_path):
 
     return results
 
-def display_results(results):
+# Leading characters spreadsheet applications interpret as formula starters
+CSV_FORMULA_PREFIXES = ('=', '+', '-', '@', '\t', '\r')
+
+
+def sanitize_csv_cell(value):
+    """Neutralize CSV formula injection (CWE-1236) in one output cell.
+
+    Cell content in this tool is attacker-controlled (OCR text, EXIF,
+    extracted stego payloads, URLs), and cells starting with =, +, -, @ or
+    whitespace execute as formulas when the report is opened in Excel or
+    LibreOffice.  Prefixing with an apostrophe makes the cell display as
+    text; the console table keeps showing the raw value.
+    """
+    if isinstance(value, str) and value[:1] in CSV_FORMULA_PREFIXES:
+        return "'" + value
+    return value
+
+
+def display_results(results, output_path="results.csv"):
     table = Table(show_header=True, header_style="bold magenta")
     table.add_column("Image Path/URL", style="cyan", overflow="fold")
     table.add_column("Hash", style="yellow", overflow="fold")
@@ -940,12 +958,12 @@ def display_results(results):
         "Extracted Text (OCR)",
         "EXIF Data"
     ]
-    with open("results.csv", "w", newline="", encoding="utf-8") as csvfile:
+    with open(output_path, "w", newline="", encoding="utf-8") as csvfile:
         writer = csv.writer(csvfile)
         writer.writerow(csv_headers)  # Write header row
-        writer.writerows(results)
+        writer.writerows([[sanitize_csv_cell(cell) for cell in row] for row in results])
 
-    logger.info("Results saved to results.csv")
+    logger.info(f"Results saved to {output_path}")
 
 def main():
     parser = argparse.ArgumentParser(description="Suspicious Image Collection Kit -- SiCK v0.21")
@@ -953,6 +971,8 @@ def main():
     group.add_argument("-u", "--url", help="The URL to start crawling")
     group.add_argument("-f", "--folder", help="Local folder to scan for images")
     parser.add_argument("-d", "--depth", type=int, default=1, help="Depth of crawling (for URL mode)")
+    parser.add_argument("-o", "--output", default="results.csv",
+                        help="Path for the CSV report (default: results.csv in the current directory)")
     parser.add_argument("-v", "--verbose", action='store_true', help="Enable debug logging")
     args = parser.parse_args()
 
@@ -965,7 +985,7 @@ def main():
         results = process_local_folder(args.folder)
 
     if results:
-        display_results(results)
+        display_results(results, args.output)
 
 if __name__ == "__main__":
     main()

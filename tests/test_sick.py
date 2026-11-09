@@ -188,7 +188,7 @@ class TestMain:
         with mock.patch("sick.crawl", crawl), mock.patch("sick.display_results", display):
             sick.main()
         crawl.assert_called_once_with("http://site.test/", 1)
-        display.assert_called_once_with(rows)
+        display.assert_called_once_with(rows, "results.csv")
 
 
 class TestProcessLocalFolder:
@@ -672,6 +672,59 @@ class TestGifAnalysis:
         gif = make_gif(tmp_path / "anim.gif", n_frames=3)
         with pytest.raises(ValueError):
             sick.extract_gif_frames(str(gif), max_frames=0)
+
+
+class TestCsvSafety:
+    """results.csv must be safe to open in spreadsheet applications."""
+
+    def test_neutralizes_formula_cells(self):
+        assert sick.sanitize_csv_cell("=1+1") == "'=1+1"
+        assert sick.sanitize_csv_cell("+SUM(A1:A2)") == "'+SUM(A1:A2)"
+        assert sick.sanitize_csv_cell("-2+cmd") == "'-2+cmd"
+        assert sick.sanitize_csv_cell("@SUM(A1)") == "'@SUM(A1)"
+        assert sick.sanitize_csv_cell("\t=cmd") == "'\t=cmd"
+
+    def test_leaves_normal_cells_alone(self):
+        assert sick.sanitize_csv_cell("No (Score: 0.00)") == "No (Score: 0.00)"
+        assert sick.sanitize_csv_cell("http://site.test/img.png") == "http://site.test/img.png"
+        assert sick.sanitize_csv_cell("") == ""
+        assert sick.sanitize_csv_cell(None) is None
+
+    def test_written_csv_has_no_executable_cells(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        rows = [make_row("=cmd|' /C calc'!A0")]
+        rows[0][7] = "+HYPERLINK(\"http://evil.test\")"  # Hidden Text column
+        sick.display_results(rows)
+        with open("results.csv", newline="", encoding="utf-8") as f:
+            written = list(csv.reader(f))
+        for cell in written[1]:
+            assert not cell.startswith(("=", "+", "@")), cell
+
+
+class TestOutputOption:
+    """-o/--output must control where the CSV report lands."""
+
+    def test_output_flag_writes_custom_path(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        folder = tmp_path / "images"
+        folder.mkdir()
+        rows = [make_row("http://a.test/1.png")]
+        monkeypatch.setattr(
+            sys, "argv", ["sick.py", "-f", str(folder), "-o", str(tmp_path / "report.csv")])
+        with mock.patch("sick.process_local_folder", return_value=rows):
+            sick.main()
+        assert (tmp_path / "report.csv").exists()
+        assert not (tmp_path / "results.csv").exists()
+
+    def test_default_output_is_results_csv(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        folder = tmp_path / "images"
+        folder.mkdir()
+        rows = [make_row("http://a.test/1.png")]
+        monkeypatch.setattr(sys, "argv", ["sick.py", "-f", str(folder)])
+        with mock.patch("sick.process_local_folder", return_value=rows):
+            sick.main()
+        assert (tmp_path / "results.csv").exists()
 
 
 class TestImageHelpers:
