@@ -1,5 +1,7 @@
+"""SiCK -- Suspicious Image Collection Kit: triage images from the web or
+local folders for steganography, AI generation, nudity and forensic metadata."""
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from PIL import ExifTags, UnidentifiedImageError, ImageChops
+from PIL import ExifTags, UnidentifiedImageError
 from fake_useragent import UserAgent
 from rich.progress import Progress
 from colorthief import ColorThief
@@ -173,7 +175,7 @@ def detect_nudity(image_path):
         # Check if the image is a GIF
         if image_path.lower().endswith('.gif'):
             return {"result": "GIF images are not supported for nudity detection", "score": 0}
-        
+
         detections = nude_detector.detect(image_path)
         nudity_related_classes = {
             'EXPOSED_ANUS', 'EXPOSED_BUTTOCKS', 'EXPOSED_BREAST',
@@ -183,13 +185,13 @@ def detect_nudity(image_path):
             detection for detection in detections
             if detection.get('class') in nudity_related_classes and detection.get('score', 0) >= 0.5
         ]
-        
+
         # Calculate overall nudity score
         if nudity_detections:
             nudity_score = max(detection.get('score', 0) for detection in nudity_detections)
         else:
             nudity_score = 0
-        
+
         return {
             "result": nudity_detections,
             "score": nudity_score
@@ -233,12 +235,12 @@ def detect_faces(pil_image):
         else:
             logger.warning(f"Unexpected image shape: {cv_image.shape}")
             return False
-        
+
         face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
         if face_cascade.empty():
             logger.error("Error loading face cascade classifier")
             return False
-        
+
         faces = face_cascade.detectMultiScale(gray_image, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
         return len(faces) > 0
     except Exception as e:
@@ -250,7 +252,7 @@ def download_image(url):
     try:
         if url.startswith('data:'):
             # Handle data URLs
-            header, encoded = url.split(",", 1)
+            _, encoded = url.split(",", 1)
             data = base64.b64decode(encoded)
             with tempfile.NamedTemporaryFile(delete=False, suffix=".tmp") as f:
                 f.write(data)
@@ -533,16 +535,14 @@ def detect_age(image_path):
         result = DeepFace.analyze(image_path, actions=['age'], enforce_detection=False)
         if isinstance(result, list) and len(result) > 0:
             return result[0].get('age')
-        else:
-            logger.warning(f"No face detected for age estimation in image: {image_path}")
-            return None
+        logger.warning(f"No face detected for age estimation in image: {image_path}")
+        return None
     except ValueError as e:
         if "Face could not be detected" in str(e):
             logger.warning(f"No face detected for age estimation in image: {image_path}")
             return None
-        else:
-            logger.error(f"Error during age detection in image: {image_path}. Error: {e}")
-            return None
+        logger.error(f"Error during age detection in image: {image_path}. Error: {e}")
+        return None
     except Exception as e:
         logger.error(f"Unexpected error during age detection in image: {image_path}. Error: {e}")
         return None
@@ -550,7 +550,7 @@ def detect_age(image_path):
 def detect_potential_child_exploitation(image_path, faces_detected):
     if not faces_detected:
         return False, None
-    
+
     try:
         age = detect_age(image_path)
         if age is not None and age < 18:
@@ -600,7 +600,7 @@ def process_image(image_path):
             except Exception as e:
                 logger.warning(f"OCR extraction failed for {image_path}: {e}")
                 detected_text = ""
-            
+
             if real_mime_type == 'image/gif':
                 logger.info("Processing GIF image")
                 dominant_color = 'N/A'
@@ -633,7 +633,7 @@ def process_image(image_path):
                 original_url or image_path,
                 image_hash,
                 str(dominant_color),
-                "Yes" if faces_found == True else "No" if faces_found == False else faces_found,
+                "Yes" if faces_found is True else "No" if faces_found is False else faces_found,
                 f"{json.dumps(nudity_results['result'], indent=2)} (Score: {nudity_results['score']:.2f})",
                 f"{'Yes' if stego_detected else 'No'} (Score: {stego_score:.2f})" if stego_score is not None else "N/A",
                 str(age_estimation),
@@ -784,8 +784,8 @@ def display_results(results):
         writer = csv.writer(csvfile)
         writer.writerow(csv_headers)  # Write header row
         writer.writerows(results)
-    
-    logger.info(f"Results saved to results.csv")
+
+    logger.info("Results saved to results.csv")
 
 def main():
     parser = argparse.ArgumentParser(description="Suspicious Image Collection Kit -- SiCK v0.21")

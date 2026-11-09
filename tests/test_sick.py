@@ -15,7 +15,7 @@ import json
 import logging
 import shutil
 import sys
-import unittest.mock as mock
+from unittest import mock
 from pathlib import Path
 
 import numpy as np
@@ -52,7 +52,7 @@ def fake_requests_get(url_map):
     Unknown URLs raise requests.ConnectionError (as a real network failure
     would), which crawl() must tolerate.
     """
-    def _get(url, **kwargs):
+    def _get(url, **_kwargs):
         if url not in url_map:
             raise requests.ConnectionError(f"unexpected URL: {url}")
         response = mock.MagicMock()
@@ -269,6 +269,8 @@ class TestProcessImageOutput:
 
 
 class TestDisplayResults:
+    """display_results table/CSV output shape."""
+
     def test_csv_contains_all_rows_and_new_headers(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         rows = [make_row("http://a.test/1.png"), make_row("http://a.test/2.png")]
@@ -363,7 +365,12 @@ class TestAIDetectionMetadata:
         assert sick.scan_generator_metadata(str(path)) == []
 
     def test_flags_iptc_trained_algorithmic_media(self, tmp_path):
-        xmp = '<x:xmpmk xmlns:Iptc4xmpCore="..."><Iptc4xmpCore:DigitalSourceType>trainedAlgorithmicMedia</Iptc4xmpCore:DigitalSourceType></x:xmpmk>'
+        """XMP declaring trainedAlgorithmicMedia must be flagged."""
+        xmp = (
+            '<x:xmpmk xmlns:Iptc4xmpCore="...">'
+            '<Iptc4xmpCore:DigitalSourceType>trainedAlgorithmicMedia'
+            '</Iptc4xmpCore:DigitalSourceType></x:xmpmk>'
+        )
         path = png_with_text(tmp_path / "iptc.png", {"XML:com.adobe.xmp": xmp})
         assert any("trained algorithmic media" in i for i in sick.scan_generator_metadata(str(path)))
 

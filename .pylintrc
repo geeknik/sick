@@ -1,0 +1,23 @@
+[FORMAT]
+# Pre-existing lines run up to ~134 chars; wrap only beyond that.
+max-line-length=140
+
+[MESSAGES CONTROL]
+disable=
+    import-error,
+    no-member,
+    logging-fstring-interpolation,
+    broad-exception-caught,
+    missing-function-docstring,
+    too-many-locals,
+    global-statement,
+    use-implicit-booleaness-not-comparison,
+    import-outside-toplevel,
+    too-few-public-methods,
+    too-many-branches,
+    too-many-statements,
+    wrong-import-order,
+    ungrouped-imports
+
+[BASIC]
+good-names=i,j,k,e,ex,f,fd,nude_detector

@@ -19,15 +19,15 @@ SiCK (Suspicious Image Collection Kit) is a Python tool designed for analyzing i
 - AI-generated image detection: generator provenance scanning (Stable Diffusion / ComfyUI / NovelAI parameter chunks, generator software tags, IPTC trainedAlgorithmicMedia, C2PA content credentials) plus Fourier-domain heuristics (GAN grid artifacts, diffusion-style high-frequency deficit)
 
 ## Installation
-**Step 1: Install Python 3.8**
-If you don't have Python 3.8 installed, you need to install it first. You can download it from the [official Python website](https://www.python.org/downloads/release/python-380/) or use a version manager like `pyenv`.
+**Step 1: Install Python 3.10+**
+If you don't have Python 3.10 or newer installed, you need to install it first. You can download it from the [official Python website](https://www.python.org/downloads/) or use a version manager like `pyenv`.
 
 **Step 2: Clone the repo**
 To continue installing SiCK, clone the repository and install the required dependencies:
 ```bash
 git clone https://github.com/geeknik/sick
 cd sick
-python3.8 -m venv env
+python3 -m venv env
 source env/bin/activate
 pip install -r requirements.txt
 ```
