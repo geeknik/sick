@@ -1,6 +1,7 @@
 """SiCK -- Suspicious Image Collection Kit: triage images from the web or
 local folders for steganography, AI generation, nudity and forensic metadata."""
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from collections import deque
 from PIL import ExifTags, UnidentifiedImageError
 from fake_useragent import UserAgent
 from rich.progress import Progress
@@ -20,6 +21,7 @@ import argparse
 import hashlib
 import re
 import zlib
+import threading
 import magic
 from PIL import Image
 import json
@@ -34,13 +36,16 @@ from pathlib import Path
 console = Console()
 user_agent = UserAgent()
 nude_detector = None
+_nude_detector_lock = threading.Lock()
 
 def initialize_nude_detector():
     global nude_detector
     if nude_detector is None:
-        logger.info("Initializing NudeDetector. This may take a moment...")
-        nude_detector = NudeDetector()
-        logger.info("NudeDetector initialized successfully.")
+        with _nude_detector_lock:
+            if nude_detector is None:
+                logger.info("Initializing NudeDetector. This may take a moment...")
+                nude_detector = NudeDetector()
+                logger.info("NudeDetector initialized successfully.")
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -818,63 +823,109 @@ def process_image(image_path):
             logger.info(f"Removed temporary file: {downloaded_file}")
     return None
 
+def _same_host(url_a, url_b):
+    """True when both URLs name the same host, ignoring case and
+    scheme-default ports ('http://x:80' == 'http://x').
+
+    A port that is NOT the scheme default stays significant, so
+    'http://x:443' does not match 'https://x'.  IPv6 literals and URLs
+    with unparseable ports compare conservatively (no match).
+    """
+    defaults = {'http': '80', 'https': '443'}
+    ports = []
+    hosts = []
+    for url in (url_a, url_b):
+        parsed = urlparse(url)
+        try:
+            port = parsed.port
+        except ValueError:
+            return False
+        if port == int(defaults.get(parsed.scheme, -1)):
+            port = None
+        hosts.append((parsed.hostname or '').lower())
+        ports.append(port)
+    return hosts[0] == hosts[1] and ports[0] == ports[1] and hosts[0] != ''
+
+
 # Function to crawl a website and process images
-def crawl(url, depth, visited=None, seen_images=None, results=None):
+def crawl(url, depth, max_pages=100):
     """Crawl pages up to *depth*, processing images found on each page.
 
-    Tracks visited pages (so link cycles terminate) and already-processed
-    image URLs, stays on the starting page's host, and accumulates result
-    rows across every page so the caller can report them once at the end.
+    Iterative breadth-first worklist bounded by *max_pages* total fetch
+    ATTEMPTS (error pages consume budget).  Tracks visited pages (so link
+    cycles terminate) and already-processed image URLs.  Links and images
+    resolve against the final (post-redirect) URL, but the crawl's SCOPE
+    stays anchored to the operator's start URL: images on a redirected
+    landing are processed, while links to any other host -- including the
+    redirect target's own pages, via open redirects -- are never followed.
+    One failing image cannot abort a page's results.
     """
-    if visited is None:
-        visited = set()
-    if seen_images is None:
-        seen_images = set()
-    if results is None:
-        results = []
+    start_url = url.split('#', 1)[0]
+    visited = set()
+    seen_images = set()
+    results = []
+    queue = deque([(start_url, depth)])
+    pending = {start_url}
 
-    url = url.split('#', 1)[0]  # fragments never change the page
-    if depth <= 0 or url in visited:
-        return results
-    visited.add(url)
-
-    try:
-        headers = {'User-Agent': user_agent.random}
-        response = requests.get(url, timeout=10, headers=headers)
-        response.raise_for_status()
-        soup = BeautifulSoup(response.content, 'html.parser')
-    except requests.RequestException as e:
-        logger.error(f"Error crawling {url}: {e}")
-        return results
-
-    # Extract image URLs, skipping any already processed on an earlier page
-    image_urls = []
-    for img_tag in soup.select('img[src]'):
-        image_url = urljoin(url, img_tag['src'])
-        if image_url not in seen_images:
-            seen_images.add(image_url)
-            image_urls.append(image_url)
-
-    # Process images in parallel
-    with ThreadPoolExecutor() as executor:
-        with Progress() as progress:
-            task = progress.add_task("[green]Processing images...", total=len(image_urls))
-            futures = [executor.submit(process_image, image_url) for image_url in image_urls]
-            for future in as_completed(futures):
-                result = future.result()
-                if result:
-                    results.append(result)
-                progress.update(task, advance=1)
-
-    # Follow same-host http(s) links only
-    start_host = urlparse(url).netloc
-    for link in soup.select('a[href]'):
-        next_url = urljoin(url, link['href']).split('#', 1)[0]
-        parsed = urlparse(next_url)
-        if parsed.scheme not in ('http', 'https') or parsed.netloc != start_host:
+    while queue and len(visited) < max_pages:
+        page_url, page_depth = queue.popleft()
+        pending.discard(page_url)
+        page_url = page_url.split('#', 1)[0]  # fragments never change the page
+        if page_depth <= 0 or page_url in visited:
             continue
-        crawl(next_url, depth - 1, visited, seen_images, results)
+        visited.add(page_url)
 
+        try:
+            headers = {'User-Agent': user_agent.random}
+            response = requests.get(page_url, timeout=10, headers=headers)
+            response.raise_for_status()
+        except requests.RequestException as e:
+            logger.error(f"Error crawling {page_url}: {e}")
+            continue
+
+        # Resolve links and images against the FINAL url after redirects
+        base_url = response.url if isinstance(getattr(response, "url", None), str) else page_url
+        soup = BeautifulSoup(response.content, 'html.parser')
+
+        # Extract image URLs, skipping any already processed on an earlier page
+        image_urls = []
+        for img_tag in soup.select('img[src]'):
+            image_url = urljoin(base_url, img_tag['src'])
+            if image_url not in seen_images:
+                seen_images.add(image_url)
+                image_urls.append(image_url)
+
+        # Process images in parallel; one failure must not abort the page
+        with ThreadPoolExecutor() as executor:
+            with Progress() as progress:
+                task = progress.add_task("[green]Processing images...", total=len(image_urls))
+                futures = [executor.submit(process_image, image_url) for image_url in image_urls]
+                for future in as_completed(futures):
+                    try:
+                        result = future.result()
+                    except Exception as e:
+                        logger.error(f"Error processing image: {e}")
+                        result = None
+                    if result:
+                        results.append(result)
+                    progress.update(task, advance=1)
+
+        # Follow links only within the START url's host: an open redirect
+        # must not be able to steer the crawl onto a foreign site
+        for link in soup.select('a[href]'):
+            next_url = urljoin(base_url, link['href']).split('#', 1)[0]
+            parsed = urlparse(next_url)
+            if parsed.scheme not in ('http', 'https'):
+                continue
+            if not _same_host(next_url, start_url):
+                continue
+            if next_url in visited or next_url in pending:
+                continue
+            queue.append((next_url, page_depth - 1))
+            pending.add(next_url)
+
+    if len(visited) >= max_pages and queue:
+        logger.info(f"Page cap reached ({max_pages} pages); stopping crawl.")
     return results
 
 def process_local_folder(folder_path):
@@ -974,6 +1025,8 @@ def main():
     group.add_argument("-u", "--url", help="The URL to start crawling")
     group.add_argument("-f", "--folder", help="Local folder to scan for images")
     parser.add_argument("-d", "--depth", type=int, default=1, help="Depth of crawling (for URL mode)")
+    parser.add_argument("-m", "--max-pages", type=int, default=100,
+                        help="Maximum number of pages to fetch while crawling (default 100)")
     parser.add_argument("-o", "--output", default="results.csv",
                         help="Path for the CSV report (default: results.csv in the current directory)")
     parser.add_argument("-v", "--verbose", action='store_true', help="Enable debug logging")
@@ -983,7 +1036,7 @@ def main():
         logger.setLevel(logging.DEBUG)
 
     if args.url:
-        results = crawl(args.url, args.depth)
+        results = crawl(args.url, args.depth, args.max_pages)
     else:
         results = process_local_folder(args.folder)
 

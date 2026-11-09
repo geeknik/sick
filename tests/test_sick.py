@@ -168,6 +168,102 @@ class TestCrawl:
         display.assert_not_called()
 
 
+    def test_crawl_respects_max_pages(self):
+        """A page cap must bound total fetches on unbounded sites."""
+        pages = {f"http://site.test/p{i}": f'<a href="/p{i+1}">next</a>' for i in range(20)}
+        get = fake_requests_get(pages)
+        with mock.patch("sick.requests.get", get), \
+                mock.patch("sick.process_image", return_value=None):
+            sick.crawl("http://site.test/p0", depth=50, max_pages=5)
+        assert get.call_count == 5
+
+    def test_crawl_survives_deep_sites_without_recursion(self):
+        """A 3000-page chain must not blow the recursion stack."""
+        pages = {f"http://site.test/p{i}": f'<a href="/p{i+1}">next</a>' for i in range(3000)}
+        get = fake_requests_get(pages)
+        with mock.patch("sick.requests.get", get), \
+                mock.patch("sick.process_image", return_value=None):
+            results = sick.crawl("http://site.test/p0", depth=5000, max_pages=3000)
+        assert get.call_count == 3000
+        assert results == []
+
+    def test_crawl_one_failing_image_does_not_abort_page(self):
+        """An exception from one image must not kill the page's other rows."""
+        pages = {"http://site.test/a": '<img src="/one.png"><img src="/two.png">'}
+        get = fake_requests_get(pages)
+        process = mock.MagicMock(side_effect=[Exception("boom"), make_row("http://site.test/two.png")])
+        with mock.patch("sick.requests.get", get), mock.patch("sick.process_image", process):
+            results = sick.crawl("http://site.test/a", depth=1)
+        assert len(results) == 1
+        assert results[0][0] == "http://site.test/two.png"
+
+    def test_crawl_redirect_landing_images_only_no_foreign_links(self):
+        """Redirected landings keep correct image URLs but foreign links
+        are NOT followed: the crawl's scope is the operator's start host."""
+        landing = mock.MagicMock()
+        landing.url = "http://final.test/landing"
+        landing.content = b'<img src="pic.png"><a href="other.html">x</a>'
+        landing.raise_for_status.return_value = None
+        get = mock.MagicMock(return_value=landing)
+        process = mock.MagicMock(return_value=None)
+        with mock.patch("sick.requests.get", get), mock.patch("sick.process_image", process):
+            sick.crawl("http://start.test/go", depth=3)
+        process.assert_called_once_with("http://final.test/pic.png")
+        fetched = [call.args[0] for call in get.call_args_list]
+        assert fetched == ["http://start.test/go"]  # no foreign link followed
+
+    def test_crawl_open_redirect_cannot_chain_hosts(self):
+        """An open redirect must not widen the crawl to another site."""
+        evil = mock.MagicMock()
+        evil.url = "http://evil.test/entry"
+        evil.content = b'<a href="/more">m</a><a href="http://evil2.test/x">x</a>'
+        evil.raise_for_status.return_value = None
+        get = mock.MagicMock(return_value=evil)
+        with mock.patch("sick.requests.get", get), \
+                mock.patch("sick.process_image", return_value=None):
+            sick.crawl("http://start.test/redirect", depth=10)
+        assert get.call_count == 1
+
+    def test_crawl_same_host_ignores_default_port_and_case(self):
+        """SITE.TEST:80 and site.test are the same http host."""
+        pages = {"http://site.test/a": '<a href="HTTP://SITE.TEST:80/b">b</a>',
+                 "http://site.test/b": "<html></html>"}
+        get = fake_requests_get(pages)
+        with mock.patch("sick.requests.get", get), \
+                mock.patch("sick.process_image", return_value=None):
+            sick.crawl("http://site.test/a", depth=2)
+        assert get.call_count == 2
+
+
+class TestNudeDetectorInit:
+    """The lazy model load must be thread-safe under the thread pool."""
+
+    def test_initialize_nude_detector_loads_model_once(self):
+        import threading
+        import time
+        calls = []
+
+        class SlowDetector:
+            """Test double that models slow NudeDetector model loading."""
+            def __init__(self):
+                time.sleep(0.05)
+                calls.append(1)
+
+        previous = sick.nude_detector
+        sick.nude_detector = None
+        try:
+            with mock.patch("sick.NudeDetector", SlowDetector):
+                threads = [threading.Thread(target=sick.initialize_nude_detector)
+                           for _ in range(8)]
+                for thread in threads:
+                    thread.start()
+                for thread in threads:
+                    thread.join()
+        finally:
+            sick.nude_detector = previous
+        assert len(calls) == 1
+
+
 class TestMain:
     """Regression tests for argument handling."""
 
@@ -187,7 +283,7 @@ class TestMain:
         display = mock.MagicMock()
         with mock.patch("sick.crawl", crawl), mock.patch("sick.display_results", display):
             sick.main()
-        crawl.assert_called_once_with("http://site.test/", 1)
+        crawl.assert_called_once_with("http://site.test/", 1, 100)
         display.assert_called_once_with(rows, "results.csv")
 
 
