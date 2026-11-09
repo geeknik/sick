@@ -6,6 +6,7 @@ certifi
 charset-normalizer
 coloredlogs
 colorthief
+deepface
 fake-useragent
 flatbuffers
 gast
@@ -16,6 +17,7 @@ grpcio
 h5py
 humanfriendly
 idna
+imagehash
 importlib-metadata
 importlib-resources
 keras
@@ -44,6 +46,7 @@ requests-oauthlib
 rich
 rsa
 scikit-learn
+scipy
 six
 soupsieve
 sympy
@@ -53,7 +56,6 @@ tensorflow
 tensorflow-estimator
 tensorflow-io-gcs-filesystem
 termcolor
-tesseract
 tf-keras
 typing_extensions
 urllib3
