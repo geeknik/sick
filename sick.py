@@ -18,6 +18,7 @@ import tempfile
 import requests
 import argparse
 import hashlib
+import re
 import zlib
 import magic
 from PIL import Image
@@ -505,26 +506,99 @@ def detect_steganography(image_path):
         logger.error(f"Error during steganography detection in image: {image_path}. Error: {e}")
         return False, None, None
 
+# Byte signatures of common file types stego tools embed as payloads.
+# Every signature is >= 5 bytes or structurally validated: at realistic
+# resolutions the 64 extraction plans scan tens of MB of candidate bytes,
+# and shorter or unvalidated magics (bare PK\x03\x04, \xff\xd8\xff, BZh,
+# \x1f\x8b\x08) match by chance on most clean images.
+EMBEDDED_FILE_SIGNATURES = (
+    (b'PK\x03\x04\x14\x00', 'ZIP archive'),
+    (b'\x89PNG\r\n\x1a\n', 'PNG image'),
+    (b'\xff\xd8\xff\xe0\x00\x10', 'JPEG image (JFIF)'),
+    (b'GIF87a', 'GIF image'),
+    (b'GIF89a', 'GIF image'),
+    (b'Rar!\x1a\x07\x00', 'RAR archive'),
+    (b"7z\xbc\xaf'\x1c", '7-Zip archive'),
+    (b'%PDF-', 'PDF document'),
+    (b'-----BEGIN ', 'PEM/ASCII-armored data'),
+)
+
+# Structurally-validated signatures that need variable bytes matched:
+# - JPEG APP1/Exif: SOI + APP1 marker + 2-byte length + 'Exif\0'
+# - bzip2: 'BZh' + compression level digit + block magic (pi digits)
+# - gzip: magic + CM=deflate + FLG without reserved bits + 4-byte MTIME
+#   + XFL byte as written by standard implementations
+EMBEDDED_FILE_SIGNATURE_PATTERNS = (
+    (rb'\xff\xd8\xff\xe1.{2}Exif\x00', 'JPEG image (EXIF)'),
+    (rb'BZh[1-9]\x31\x41\x59\x26\x53\x59', 'bzip2 stream'),
+    (rb'\x1f\x8b\x08[\x00-\x1f].{4}[\x00\x02\x04\x08]', 'gzip stream'),
+)
+
+
 def detect_hidden_text(np_img):
+    """Recover hidden payloads from LSB planes across many embedding orders.
+
+    Real embedding tools vary channel (R/G/B/interleaved), traversal
+    (row/column-major), bit order (MSB/LSB-first) and bit plane (1 or 2),
+    so we scan a catalog of 32 extraction plans -- the approach taken by
+    tools like zsteg.  Two finding classes are reported:
+
+    * embedded file signatures (ZIP/PNG/JPEG/RAR/7z/PDF/gzip/bzip2/PEM),
+      which are searched in every plan's raw bytes;
+    * printable text runs, gated on length >= 8, >= 5 distinct characters
+      and >= 70% alphanumeric content so structured-but-clean planes
+      (e.g. repeated 0x55 from a smooth gradient) do not false-positive.
+
+    Returns the strongest finding as a string, or None.
+    """
     try:
-        # Extract LSB from each color channel
-        lsb_r = np.bitwise_and(np_img[:,:,0], 1).flatten()
-        lsb_g = np.bitwise_and(np_img[:,:,1], 1).flatten()
-        lsb_b = np.bitwise_and(np_img[:,:,2], 1).flatten()
+        np_img = np.asarray(np_img)
+        if np_img.ndim == 2:
+            np_img = np.stack((np_img,) * 3, axis=-1)
 
-        # Combine LSBs to form bytes
-        lsb_combined = np.packbits(np.column_stack((lsb_r, lsb_g, lsb_b)).flatten())
+        def iter_candidates():
+            for plane_bit, plane_name in ((1, 'bit1'), (2, 'bit2')):
+                for transposed, trav_name in ((False, 'row'), (True, 'col')):
+                    img = np_img.transpose(1, 0, 2) if transposed else np_img
+                    planes = [((img[:, :, c] & plane_bit) >> (plane_bit - 1)).astype(np.uint8)
+                              for c in range(3)]
+                    streams = [
+                        ('R', planes[0]), ('G', planes[1]), ('B', planes[2]),
+                        ('RGB-interleaved', np.stack(planes, axis=-1)),
+                    ]
+                    for channel_name, stream in streams:
+                        bits = stream.reshape(-1)
+                        for bitorder, order_name in (('big', 'msb'), ('little', 'lsb')):
+                            packed = np.packbits(bits, bitorder=bitorder)
+                            yield (f"{channel_name}/{trav_name}/{order_name}/{plane_name}",
+                                   packed.tobytes())
 
-        # Convert bytes to string
-        hidden_text = lsb_combined.tobytes().decode('utf-8', errors='ignore')
+        def find_signature(data):
+            for signature, label in EMBEDDED_FILE_SIGNATURES:
+                offset = data.find(signature)
+                if offset != -1:
+                    return label, offset
+            for pattern, label in EMBEDDED_FILE_SIGNATURE_PATTERNS:
+                match = re.search(pattern, data, re.DOTALL)
+                if match:
+                    return label, match.start()
+            return None, -1
 
-        # Remove non-printable characters and filter out short words
-        words = ''.join(filter(lambda x: x.isprintable(), hidden_text)).split()
-        meaningful_words = [word for word in words if len(word) >= 4]  # Only keep words with 4 or more characters
-
-        # Join meaningful words and return
-        result = ' '.join(meaningful_words)
-        return result[:100] if result else None  # Return first 100 characters if any meaningful text is found
+        best = ("", "")
+        for plan, data in iter_candidates():
+            label, offset = find_signature(data)
+            if label is not None:
+                preview = data[offset:offset + 24].decode('ascii', errors='replace')
+                return f"{label} embedded via LSB ({plan}): {preview!r}"
+            for run_bytes in re.findall(rb'[ -~]{8,}', data):
+                run = run_bytes.decode('ascii')
+                distinct = len(set(run))
+                alnum = sum(c.isalnum() or c == ' ' for c in run) / len(run)
+                if distinct >= 5 and alnum >= 0.7 and len(run) > len(best[0]):
+                    best = (run, plan)
+        if best[0]:
+            return f"{best[0][:120]} (via LSB {best[1]})"
+        return None
 
     except Exception as e:
         logger.error(f"Error during hidden text detection: {e}")

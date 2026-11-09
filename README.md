@@ -16,6 +16,7 @@ SiCK (Suspicious Image Collection Kit) is a Python tool designed for analyzing i
 - Age estimation with DeepFace
 - Determines dominant color
 - Detects LSB steganography via RS analysis (Fridrich et al. 2001) and WS analysis (Ker & Böhme 2008) with quantitative payload-rate estimation
+- Hidden payload extraction: scans 32 LSB embedding orders (R/G/B/interleaved planes, row/column traversal, MSB/LSB bit order, bit planes 1-2) for text and embedded file signatures (ZIP/PNG/JPEG/RAR/7z/PDF/gzip/bzip2/PEM)
 - AI-generated image detection: generator provenance scanning (Stable Diffusion / ComfyUI / NovelAI parameter chunks, generator software tags, IPTC trainedAlgorithmicMedia, C2PA content credentials) plus Fourier-domain heuristics (GAN grid artifacts, diffusion-style high-frequency deficit)
 
 ## Installation

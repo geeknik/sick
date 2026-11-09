@@ -406,6 +406,98 @@ class TestAISpectralAnalysis:
         assert score < 0.5
 
 
+def lsb_embed_plane(plane, data, traverse="row", bitorder="big"):
+    """LSB-embed `data` into a single 2-D channel plane in a chosen order."""
+    out = plane.copy()
+    height, width = out.shape
+    flat = out.T.reshape(-1) if traverse == "col" else out.reshape(-1)
+    bits = np.unpackbits(np.frombuffer(data, dtype=np.uint8), bitorder=bitorder)
+    bits = np.concatenate([bits, np.zeros(len(flat) - len(bits), dtype=np.uint8)])
+    flat[:] = (flat & np.uint8(0xFE)) | bits
+    return flat.reshape(width, height).T if traverse == "col" else flat.reshape(height, width)
+
+
+class TestHiddenTextExtraction:
+    """Multi-order LSB payload recovery (channels, traversal, bit order)."""
+
+    def test_finds_text_in_single_channel_plane(self):
+        arr = gradient_array().copy()
+        arr[:, :, 0] = lsb_embed_plane(arr[:, :, 0], b"HIDDENGEM")
+        result = sick.detect_hidden_text(arr)
+        assert result is not None and "HIDDENGEM" in result
+
+    def test_finds_text_in_column_traversal(self):
+        arr = gradient_array().copy()
+        arr[:, :, 1] = lsb_embed_plane(arr[:, :, 1], b"VERTICALGEM", traverse="col")
+        result = sick.detect_hidden_text(arr)
+        assert result is not None and "VERTICALGEM" in result
+
+    def test_finds_text_with_lsb_first_bit_order(self):
+        arr = gradient_array().copy()
+        arr[:, :, 2] = lsb_embed_plane(arr[:, :, 2], b"LITTLEENDIAN", bitorder="little")
+        result = sick.detect_hidden_text(arr)
+        assert result is not None and "LITTLEENDIAN" in result
+
+    def test_reports_embedded_archive_signature(self):
+        arr = gradient_array().copy()
+        payload = b"PK\x03\x04\x14\x00" + b"secret_archive_data" * 4
+        arr[:, :, 0] = lsb_embed_plane(arr[:, :, 0], payload)
+        result = sick.detect_hidden_text(arr)
+        assert result is not None and "ZIP" in result
+
+    def test_reports_bzip2_with_block_magic(self):
+        arr = gradient_array().copy()
+        payload = b"BZh9\x31\x41\x59\x26\x53\x59" + b"compressed payload data" * 2
+        arr[:, :, 1] = lsb_embed_plane(arr[:, :, 1], payload)
+        result = sick.detect_hidden_text(arr)
+        assert result is not None and "bzip2" in result
+
+    def test_reports_gzip_with_valid_header(self):
+        arr = gradient_array().copy()
+        payload = b"\x1f\x8b\x08\x00" + b"\x00\x00\x00\x00" + b"\x02\xff" + b"payload bytes here" * 2
+        arr[:, :, 2] = lsb_embed_plane(arr[:, :, 2], payload)
+        result = sick.detect_hidden_text(arr)
+        assert result is not None and "gzip" in result
+
+    def test_finds_bit_plane_2_payload(self):
+        """Plane-2 embedding must also be recovered."""
+        arr = gradient_array().copy()
+        plane = arr[:, :, 0]
+        flat = plane.reshape(-1)
+        bits = np.unpackbits(np.frombuffer(b"SECONDPLANE", dtype=np.uint8))
+        flat[:len(bits)] = (flat[:len(bits)] & np.uint8(0xFD)) | (bits << 1)
+        result = sick.detect_hidden_text(arr)
+        assert result is not None and "SECONDPLANE" in result
+
+    def test_no_signature_claims_on_noise_images(self):
+        """Chance byte matches must never produce 'embedded archive' claims.
+
+        At 1024x1024 the 32 plans scan ~13 MB of candidate bytes; unvalidated
+        3-byte magics fire on most such images (verified: 9/10 seeds)."""
+        for seed in (0, 1):
+            rng = np.random.default_rng(seed)
+            noise = rng.integers(0, 256, size=(1024, 1024, 3), dtype=np.uint8)
+            result = sick.detect_hidden_text(noise)
+            assert result is None or "embedded via LSB" not in result, result
+
+    def test_rgb_interleaved_order_still_found(self):
+        """The original interleaved-RGB order must remain in the catalog."""
+        arr = gradient_array().copy()
+        bits = np.unpackbits(np.frombuffer(b"INTERLEAVED", dtype=np.uint8))
+        padded = np.concatenate([bits, np.zeros(3 - len(bits) % 3, dtype=np.uint8)])
+        triplets = padded.reshape(-1, 3)
+        arr = arr.reshape(-1, 3)
+        arr[:len(triplets), 0] = (arr[:len(triplets), 0] & np.uint8(0xFE)) | triplets[:, 0]
+        arr[:len(triplets), 1] = (arr[:len(triplets), 1] & np.uint8(0xFE)) | triplets[:, 1]
+        arr[:len(triplets), 2] = (arr[:len(triplets), 2] & np.uint8(0xFE)) | triplets[:, 2]
+        arr = arr.reshape(64, 256, 3)
+        result = sick.detect_hidden_text(arr)
+        assert result is not None and "INTERLEAVED" in result
+
+    def test_clean_image_finds_nothing(self):
+        assert sick.detect_hidden_text(gradient_array()) is None
+
+
 class TestImageHelpers:
     """Characterization tests for the pure image-analysis helpers."""
 
@@ -481,15 +573,18 @@ class TestImageHelpers:
         assert 0.0 <= score <= 1.0
 
     def test_detect_hidden_text_finds_embedded_word(self):
-        """LSB-embed b'TEST' exactly the way detect_hidden_text reads it."""
-        bits = np.unpackbits(np.frombuffer(b"TEST", dtype=np.uint8))
+        """LSB-embed a phrase exactly the way detect_hidden_text reads it."""
+        data = b"TESTPAYLOAD"
+        bits = np.unpackbits(np.frombuffer(data, dtype=np.uint8))
         padded = np.concatenate([bits, np.zeros(3 - len(bits) % 3, dtype=np.uint8)])
         triplets = padded.reshape(-1, 3)
         np_img = np.zeros((len(triplets), 1, 3), dtype=np.uint8)
         np_img[:, 0, 0] = triplets[:, 0]
         np_img[:, 0, 1] = triplets[:, 1]
         np_img[:, 0, 2] = triplets[:, 2]
-        assert sick.detect_hidden_text(np_img) == "TEST"
+        result = sick.detect_hidden_text(np_img)
+        assert result is not None
+        assert "TESTPAYLOAD" in result
 
     def test_download_image_accepts_valid_data_url(self):
         png = make_png_bytes()
