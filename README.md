@@ -13,8 +13,10 @@ SiCK (Suspicious Image Collection Kit) is a Python tool designed for analyzing i
 - EXIF data extraction
 - Face detection with OpenCV
 - Nudity detection with NudeNet
+- Age estimation with DeepFace
 - Determines dominant color
-- Detects Steganography
+- Detects LSB steganography via RS analysis (Fridrich et al. 2001) and WS analysis (Ker & Böhme 2008) with quantitative payload-rate estimation
+- AI-generated image heuristics
 
 ## Installation
 **Step 1: Install Python 3.8**
@@ -38,12 +40,14 @@ python -m pytest tests/
 ```
 
 ## Usage
-Run SiCK using the following command:
+Run SiCK against a URL or a local folder:
 ```bash
-python sick.py -d [DEPTH] [URL] (-v)
+python sick.py -u [URL] (-d [DEPTH]) (-v)
+python sick.py -f [FOLDER] (-v)
 ```
-- `DEPTH`: Depth for web crawling. (required)
-- `URL`: The URL to start crawling. (required)
+- `URL`: The URL to start crawling (required, unless `-f` is used)
+- `FOLDER`: Local folder to scan for images (required, unless `-u` is used)
+- `DEPTH`: Depth for web crawling (optional, default 1)
 - `VERBOSE`: enable debug logging (optional)
 
 ![Screenshot_09:34:17_12-04-2024](https://github.com/geeknik/sick/assets/466878/ae52d61a-f37a-47f1-8b33-76368fba3105)

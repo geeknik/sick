@@ -3,8 +3,6 @@ from PIL import ExifTags, UnidentifiedImageError, ImageChops, ImageFilter
 import imagehash
 from fake_useragent import UserAgent
 from rich.progress import Progress
-from scipy import stats
-from scipy.stats import binomtest, chi2, entropy
 from colorthief import ColorThief
 from nudenet import NudeDetector
 from urllib.parse import urljoin, urlparse
@@ -19,9 +17,9 @@ import tempfile
 import requests
 import argparse
 import hashlib
+import zlib
 import magic
 from PIL import Image
-from scipy.fft import dctn
 import json
 import cv2
 import csv
@@ -46,16 +44,129 @@ def initialize_nude_detector():
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-def rs_analysis(lsb_array):
-    lsb_array = lsb_array.astype(np.int64) # Cast to larger data type
-    # Calculate RS values for adjacent pixel pairs
-    rs_values = [abs(lsb_array[i] - lsb_array[i+1]) for i in range(len(lsb_array) - 1)]
-    # Analyze the frequency distribution of RS values
-    # You can use chi-square test or other statistical methods here
-    # For simplicity, we'll just calculate the mean
-    mean_rs = np.mean(rs_values)
-    threshold = 0.45  # Adjust based on experimentation
-    return mean_rs > threshold
+# Mask used by RS analysis: which pixels of each 4-pixel group get flipped
+RS_MASK = np.array([1, 0, 0, 1], dtype=bool)
+
+
+def _flip_lsb(values):
+    """F1: the LSB flipping permutation 2i <-> 2i+1."""
+    return values ^ 1
+
+
+def _flip_lsb_negative(values):
+    """F-1: the other LSB pairing 2i-1 <-> 2i."""
+    v = values.astype(np.int16)
+    return np.clip(np.where(v % 2 == 0, v - 1, v + 1), 0, 255)
+
+
+def rs_analysis(channel):
+    """Estimate the LSB-replacement payload rate with RS analysis.
+
+    Follows Fridrich, Goljan & Du, "Reliable Detection of LSB Steganography
+    in Color and Gray-Scale Images" (IEEE Multimedia, 2001): classify groups
+    of 4 adjacent pixels as regular/singular for a mask and its dual, repeat
+    on the fully-LSB-flipped channel, and solve the RS quadratic for the
+    crossing point x; the payload estimate is |x / (x - 0.5)|.  The estimator
+    is known to become unreliable as the rate approaches 1 (the curves
+    converge), so treat very high readings with caution.
+
+    Returns a float in [0, 1]; degenerate inputs yield 0.0.
+    """
+    channel = np.asarray(channel, dtype=np.uint8)
+    if channel.size < 8 or float(channel.max()) == float(channel.min()):
+        return 0.0  # degenerate: too small or perfectly flat
+
+    def regular_singular_counts(groups):
+        """Return (R, S) fractions for F1 and (R-, S-) for F-1 under RS_MASK."""
+        base = np.abs(np.diff(groups.astype(np.int16), axis=1)).sum(axis=1)
+        pos = groups.copy()
+        pos[:, RS_MASK] = _flip_lsb(pos[:, RS_MASK])
+        neg = groups.copy()
+        neg[:, RS_MASK] = _flip_lsb_negative(neg[:, RS_MASK])
+        var_pos = np.abs(np.diff(pos.astype(np.int16), axis=1)).sum(axis=1)
+        var_neg = np.abs(np.diff(neg.astype(np.int16), axis=1)).sum(axis=1)
+        return (np.mean(var_pos > base), np.mean(var_pos < base),
+                np.mean(var_neg > base), np.mean(var_neg < base))
+
+    n_groups = channel.size // 4
+    groups = channel.reshape(-1, 4)[:n_groups]
+    r, s, r_neg, s_neg = regular_singular_counts(groups)
+    r_f, s_f, r_neg_f, s_neg_f = regular_singular_counts(_flip_lsb(groups))
+
+    d0 = r - s                 # R_M(p/2) - S_M(p/2)
+    d_neg0 = r_neg - s_neg     # R_-M(p/2) - S_-M(p/2)
+    d1 = r_f - s_f             # R_M(1-p/2) - S_M(1-p/2)
+    d_neg1 = r_neg_f - s_neg_f # R_-M(1-p/2) - S_-M(1-p/2)
+
+    # 2(d1 + d0)x^2 + (d-0 - d-1 - d1 - 3d0)x + (d0 - d-0) = 0
+    a = 2.0 * (d1 + d0)
+    b = d_neg0 - d_neg1 - d1 - 3.0 * d0
+    c = d0 - d_neg0
+
+    if abs(a) < 1e-12:
+        if abs(b) < 1e-12:
+            return 0.0
+        x = -c / b
+    else:
+        discriminant = b * b - 4.0 * a * c
+        if discriminant < 0:
+            return 0.0
+        root = np.sqrt(discriminant)
+        candidates = ((-b + root) / (2 * a), (-b - root) / (2 * a))
+        x = min(candidates, key=abs)  # smallest-magnitude root, per the paper
+    if abs(x - 0.5) < 1e-12:
+        return 1.0
+    rate = abs(x / (x - 0.5))
+    return float(np.clip(rate, 0.0, 1.0))
+
+
+def ws_analysis(channel):
+    """Estimate the LSB-replacement payload rate with WS (weighted stego).
+
+    Follows Fridrich's WS method as revised by Ker & Bohme, "Revisiting
+    Weighted Stego-Image Steganalysis" (SPIE, 2008): predict each cover
+    pixel from its 4 neighbours, and compute the weighted mean residual
+    r_i = (s_i - flip(s_i)) * (s_i - predicted_i).  Twice the mean residual
+    is an unbiased estimator of the payload rate (a replaced LSB only flips
+    the pixel half the time, hence the factor 2).  Weights follow the
+    moderated scheme 1/(5 + local variance).
+
+    Returns a float in [0, 1].
+    """
+    channel = np.asarray(channel, dtype=np.uint8)
+    if channel.shape[0] < 3 or channel.shape[1] < 3:
+        return 0.0
+
+    s = channel[1:-1, 1:-1].astype(np.float64)
+    flipped = (_flip_lsb(channel[1:-1, 1:-1])).astype(np.float64)
+    up = channel[:-2, 1:-1].astype(np.float64)
+    down = channel[2:, 1:-1].astype(np.float64)
+    left = channel[1:-1, :-2].astype(np.float64)
+    right = channel[1:-1, 2:].astype(np.float64)
+    predicted = (up + down + left + right) / 4.0
+
+    residual = (s - flipped) * (s - predicted)
+
+    local_var = ((up - predicted) ** 2 + (down - predicted) ** 2 +
+                 (left - predicted) ** 2 + (right - predicted) ** 2) / 4.0
+    weights = 1.0 / (5.0 + local_var)
+
+    rate = 2.0 * float(np.sum(weights * residual) / np.sum(weights))
+    return float(np.clip(rate, 0.0, 1.0))
+
+
+def lsb_plane_compression_ratio(np_img):
+    """Measure how incompressible the LSB plane is.
+
+    Natural, structured content leaves correlations in the LSB plane that
+    deflate compresses well; encrypted payload bits look random and stay
+    near the 1:1 size ratio.  Returns compressed/raw size in [0, 1+].
+    """
+    plane = np.packbits(np.bitwise_and(np_img, 1).reshape(-1))
+    raw = plane.tobytes()
+    if not raw:
+        return 0.0
+    return len(zlib.compress(raw, 9)) / len(raw)
 
 # Function to detect nudity in an image
 def detect_nudity(image_path):
@@ -230,6 +341,16 @@ def get_dominant_color(image_path):
 
 # Function to detect steganography in an image
 def detect_steganography(image_path):
+    """Heuristic LSB-replacement steganography detector.
+
+    Combines two published quantitative payload estimators -- RS analysis
+    (Fridrich, Goljan & Du 2001) and WS analysis (Ker & Bohme 2008), the
+    latter recommended as the first-choice method for LSB replacement --
+    with an LSB-plane incompressibility signal.  The two estimator rates are
+    averaged per channel and across channels, then blended with the
+    compression signal.  Returns (detected, score, hidden_text); a score of
+    0.5 or higher is reported as suspected steganography.
+    """
     try:
         with Image.open(image_path) as img:
             # Handle PNG transparency and convert to RGB
@@ -237,56 +358,26 @@ def detect_steganography(image_path):
                 bg = Image.new('RGB', img.size, (255, 255, 255))
                 bg.paste(img, mask=img.split()[3] if img.mode == 'RGBA' else None)
                 img = bg
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
 
             np_img = np.array(img).astype(np.uint8)
 
-            # Ensure the image is 3D (for RGB channels)
-            if len(np_img.shape) == 2:
-                np_img = np.stack((np_img,) * 3, axis=-1)
+            channels = [np_img[:, :, c] for c in range(np_img.shape[2])]
+            ws_rate = float(np.mean([ws_analysis(ch) for ch in channels]))
+            rs_rate = float(np.mean([rs_analysis(ch) for ch in channels]))
+            estimator_rate = 0.65 * ws_rate + 0.35 * rs_rate
 
-            # LSB Analysis
-            lsb_array = np.bitwise_and(np_img.flatten(), 1)
-            lsb_variance = np.var(lsb_array)
+            # Random-looking LSB planes do not compress; structured ones do.
+            compression_ratio = lsb_plane_compression_ratio(np_img)
+            compression_component = min(max((compression_ratio - 0.7) / 0.3, 0.0), 1.0)
 
-            # Chi-Square Test
-            observed_freq = np.bincount(lsb_array, minlength=2)
-            expected_freq = np.sum(observed_freq) / 2
-            chi_square_stat = np.sum((observed_freq - expected_freq)**2 / expected_freq)
-            chi_square_p_value = 1 - stats.chi2.cdf(chi_square_stat, 1)
-
-            # Sample Pair Analysis
-            sample_pairs = np.column_stack((lsb_array[::2], lsb_array[1::2]))
-            sp_chi_square_stat = np.sum((np.bincount(sample_pairs.dot([1, 2])) - len(sample_pairs)/4)**2) / (len(sample_pairs)/4)
-            sp_chi_square_p_value = 1 - stats.chi2.cdf(sp_chi_square_stat, 3)
-
-            # RS Analysis
-            rs_result = rs_analysis(lsb_array)
-
-            # DCT Analysis
-            dct_coeffs = dctn(np_img[:,:,0], norm='ortho')  # Analyze first channel
-            dct_lsb = np.bitwise_and(dct_coeffs.flatten().astype(np.int64), 1)
-            dct_chi_square_stat = np.sum((np.bincount(dct_lsb, minlength=2) - len(dct_lsb)/2)**2) / (len(dct_lsb)/2)
-            dct_chi_square_p_value = 1 - stats.chi2.cdf(dct_chi_square_stat, 1)
-
-            # Entropy Analysis
-            entropy = stats.entropy(np.bincount(np_img.flatten()))
-            max_entropy = np.log2(256)  # Maximum possible entropy for 8-bit image
-            normalized_entropy = entropy / max_entropy
-
-            # Combine results with adjusted thresholds and weights
-            stego_score = (
-                0.2 * (lsb_variance > 0.3) +
-                0.2 * (chi_square_p_value < 0.01) +
-                0.2 * (sp_chi_square_p_value < 0.01) +
-                0.2 * rs_result +
-                0.1 * (dct_chi_square_p_value < 0.01) +
-                0.1 * (normalized_entropy > 0.9)  # High entropy might indicate hidden data
-            )
+            stego_score = 0.75 * estimator_rate + 0.25 * compression_component
 
             # Detect hidden text
             hidden_text = detect_hidden_text(np_img)
 
-            return stego_score >= 0.6, stego_score, hidden_text  # Adjusted threshold
+            return stego_score >= 0.5, float(stego_score), hidden_text
 
     except Exception as e:
         logger.error(f"Error during steganography detection in image: {image_path}. Error: {e}")

@@ -208,6 +208,22 @@ class TestProcessLocalFolder:
         assert process.call_count == 2
 
 
+def gradient_array(height=64, width=256):
+    """Return an HxWx3 structured test image (smooth horizontal ramp)."""
+    ramp = np.tile(np.arange(width, dtype=np.uint8), (height, 1))
+    return np.stack([ramp] * 3, axis=-1)
+
+
+def lsb_embed(arr, rng, fraction=1.0):
+    """Sequentially LSB-replace the first `fraction` of samples, like real tools."""
+    out = arr.copy()
+    flat = out.reshape(-1)
+    bits = rng.integers(0, 2, size=flat.size, dtype=np.uint8)
+    k = int(flat.size * fraction)
+    flat[:k] = (flat[:k] & np.uint8(0xFE)) | bits[:k]
+    return out
+
+
 class TestImageHelpers:
     """Characterization tests for the pure image-analysis helpers."""
 
@@ -223,9 +239,64 @@ class TestImageHelpers:
         with Image.open(path) as img:
             assert sick.extract_exif_data(img) == {}
 
-    def test_rs_analysis_thresholds(self):
-        assert not sick.rs_analysis(np.zeros(100, dtype=np.uint8))
-        assert sick.rs_analysis(np.tile(np.array([0, 1], dtype=np.uint8), 50))
+    def test_rs_analysis_returns_payload_estimate(self):
+        """RS analysis must return a float payload estimate in [0, 1]."""
+        rng = np.random.default_rng(42)
+        clean = gradient_array()[:, :, 0]
+        full = lsb_embed(gradient_array(), rng, 1.0)[:, :, 0]
+        half = lsb_embed(gradient_array(), rng, 0.5)[:, :, 0]
+        for channel in (clean, full, half):
+            assert isinstance(sick.rs_analysis(channel), float)
+            assert 0.0 <= sick.rs_analysis(channel) <= 1.0
+        # must not fire on clean content (RS is unreliable at very high
+        # payloads, so only the clean side is asserted -- see Ker 2008)
+        assert sick.rs_analysis(clean) < 0.1
+
+    def test_ws_analysis_estimates_payload(self):
+        """WS (Ker & Bohme 2008) must quantitatively estimate LSB payload."""
+        rng = np.random.default_rng(42)
+        clean = gradient_array()[:, :, 0]
+        full = lsb_embed(gradient_array(), rng, 1.0)[:, :, 0]
+        half = lsb_embed(gradient_array(), rng, 0.5)[:, :, 0]
+        assert sick.ws_analysis(clean) < 0.1
+        assert sick.ws_analysis(full) > 0.8
+        assert 0.25 <= sick.ws_analysis(half) <= 0.75
+
+    def test_rs_analysis_handles_degenerate_flat_channel(self):
+        flat = np.full((64, 64), 128, dtype=np.uint8)
+        assert sick.rs_analysis(flat) == 0.0
+
+    def test_lsb_plane_compression_ratio_separates_structured_and_random(self):
+        rng = np.random.default_rng(42)
+        structured = sick.lsb_plane_compression_ratio(gradient_array())
+        random_plane = sick.lsb_plane_compression_ratio(lsb_embed(gradient_array(), rng, 1.0))
+        assert structured < 0.5
+        assert random_plane > 0.9
+
+    def test_detect_steganography_flags_fully_embedded_image(self, tmp_path):
+        """A fully LSB-embedded image must be flagged as steganographic."""
+        arr = lsb_embed(gradient_array(), np.random.default_rng(7), 1.0)
+        path = tmp_path / "stego.png"
+        Image.fromarray(arr, "RGB").save(path)
+        detected, score, _ = sick.detect_steganography(str(path))
+        assert detected
+        assert score >= 0.5
+
+    def test_detect_steganography_clean_gradient_not_flagged(self, tmp_path):
+        path = tmp_path / "clean.png"
+        Image.fromarray(gradient_array(), "RGB").save(path)
+        detected, score, _ = sick.detect_steganography(str(path))
+        assert not detected
+        assert score < 0.5
+
+    def test_detect_steganography_score_is_bounded(self, tmp_path):
+        rng = np.random.default_rng(3)
+        noise = rng.integers(0, 256, size=(64, 256, 3), dtype=np.uint8)
+        path = tmp_path / "noise.png"
+        Image.fromarray(noise, "RGB").save(path)
+        detected, score, _ = sick.detect_steganography(str(path))
+        assert isinstance(detected, (bool, np.bool_))
+        assert 0.0 <= score <= 1.0
 
     def test_detect_hidden_text_finds_embedded_word(self):
         """LSB-embed b'TEST' exactly the way detect_hidden_text reads it."""
