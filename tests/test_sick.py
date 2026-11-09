@@ -9,7 +9,9 @@ Two groups:
     helpers (they exercise existing, unchanged behaviour).
 """
 import base64
+import csv
 import io
+import json
 import logging
 import shutil
 import sys
@@ -27,8 +29,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def make_row(url):
-    """Return a 13-column result row like process_image produces."""
-    return [url] + ["x"] * 12
+    """Return a 15-column result row like process_image produces."""
+    return [url] + ["x"] * 14
 
 
 def make_png_bytes(color=(128, 128, 128), size=(32, 32)):
@@ -206,6 +208,76 @@ class TestProcessLocalFolder:
         assert instance.add_task.call_args.kwargs["total"] == 2
         assert instance.update.call_count == 2
         assert process.call_count == 2
+
+
+class TestProcessImageOutput:
+    """Regression tests: OCR and EXIF are computed and must reach the output."""
+
+    def test_row_includes_ocr_and_exif(self, tmp_path):
+        path = make_png_file(tmp_path / "photo.png")
+        exif = {"Make": "TestCam", "Model": "X100"}
+        with mock.patch("sick.initialize_nude_detector"), \
+                mock.patch("sick.get_dominant_color", return_value=(1, 2, 3)), \
+                mock.patch("sick.detect_faces", return_value=False), \
+                mock.patch("sick.detect_steganography", return_value=(False, 0.0, None)), \
+                mock.patch("sick.detect_age", return_value=None), \
+                mock.patch("sick.detect_ai_generated", return_value=(False, 0.1)), \
+                mock.patch("sick.detect_potential_child_exploitation", return_value=(False, None)), \
+                mock.patch("sick.detect_nudity", return_value={"result": [], "score": 0}), \
+                mock.patch("sick.extract_text_from_image", return_value="  hello   stego  world  "), \
+                mock.patch("sick.extract_exif_data", return_value=exif):
+            row = sick.process_image(str(path))
+        assert row is not None
+        assert len(row) == 15
+        assert "hello stego world" in row       # OCR text, whitespace collapsed
+        assert json.dumps(exif) in row          # EXIF surfaced as JSON
+
+    def test_row_marks_missing_ocr_and_exif(self, tmp_path):
+        path = make_png_file(tmp_path / "photo.png")
+        with mock.patch("sick.initialize_nude_detector"), \
+                mock.patch("sick.get_dominant_color", return_value=(1, 2, 3)), \
+                mock.patch("sick.detect_faces", return_value=False), \
+                mock.patch("sick.detect_steganography", return_value=(False, 0.0, None)), \
+                mock.patch("sick.detect_age", return_value=None), \
+                mock.patch("sick.detect_ai_generated", return_value=(False, 0.1)), \
+                mock.patch("sick.detect_potential_child_exploitation", return_value=(False, None)), \
+                mock.patch("sick.detect_nudity", return_value={"result": [], "score": 0}), \
+                mock.patch("sick.extract_text_from_image", return_value="   "), \
+                mock.patch("sick.extract_exif_data", return_value={}):
+            row = sick.process_image(str(path))
+        assert row is not None
+        assert row[-2:] == ["None detected", "None"]
+
+
+    def test_ocr_failure_does_not_kill_row(self, tmp_path):
+        """A missing/failing OCR backend must not drop the whole image row."""
+        path = make_png_file(tmp_path / "photo.png")
+        with mock.patch("sick.initialize_nude_detector"), \
+                mock.patch("sick.get_dominant_color", return_value=(1, 2, 3)), \
+                mock.patch("sick.detect_faces", return_value=False), \
+                mock.patch("sick.detect_steganography", return_value=(False, 0.0, None)), \
+                mock.patch("sick.detect_age", return_value=None), \
+                mock.patch("sick.detect_ai_generated", return_value=(False, 0.1)), \
+                mock.patch("sick.detect_potential_child_exploitation", return_value=(False, None)), \
+                mock.patch("sick.detect_nudity", return_value={"result": [], "score": 0}), \
+                mock.patch("sick.extract_text_from_image", side_effect=Exception("tesseract missing")), \
+                mock.patch("sick.extract_exif_data", return_value={}):
+            row = sick.process_image(str(path))
+        assert row is not None
+        assert len(row) == 15
+        assert row[-2] == "None detected"
+
+
+class TestDisplayResults:
+    def test_csv_contains_all_rows_and_new_headers(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        rows = [make_row("http://a.test/1.png"), make_row("http://a.test/2.png")]
+        sick.display_results(rows)
+        with open("results.csv", newline="", encoding="utf-8") as f:
+            data = list(csv.reader(f))
+        assert data[0][-2:] == ["Extracted Text (OCR)", "EXIF Data"]
+        assert len(data) == 3  # header + 2 rows
+        assert all(len(r) == 15 for r in data)
 
 
 def gradient_array(height=64, width=256):

@@ -470,8 +470,16 @@ def process_image(image_path):
         with Image.open(image_path) as img_obj:
             logger.info(f"Processing image: {image_path}")
             image_hash = get_image_hash(img_obj)
-            exif_info = extract_exif_data(img_obj)
-            detected_text = extract_text_from_image(img_obj)
+            try:
+                exif_info = extract_exif_data(img_obj)
+            except Exception as e:
+                logger.warning(f"EXIF extraction failed for {image_path}: {e}")
+                exif_info = {}
+            try:
+                detected_text = extract_text_from_image(img_obj)
+            except Exception as e:
+                logger.warning(f"OCR extraction failed for {image_path}: {e}")
+                detected_text = ""
             
             if real_mime_type == 'image/gif':
                 logger.info("Processing GIF image")
@@ -496,6 +504,10 @@ def process_image(image_path):
 
             nudity_results = detect_nudity(image_path)
 
+            # Surface the OCR and EXIF results in the output row
+            ocr_text = ' '.join(detected_text.split())[:200] if detected_text and detected_text.strip() else "None detected"
+            exif_summary = json.dumps(exif_info, default=str)[:300] if exif_info else "None"
+
             # Create a table row with the extracted information
             row = [
                 original_url or image_path,
@@ -510,7 +522,9 @@ def process_image(image_path):
                 str(duration),
                 f"{'Yes' if ai_generated else 'No'} (Score: {ai_score:.2f})" if ai_score is not None else "N/A",
                 "Yes" if child_exploitation_detected else "No",
-                child_exploitation_details or "N/A"
+                child_exploitation_details or "N/A",
+                ocr_text,
+                exif_summary
             ]
             logger.info(f"Successfully processed image: {image_path}")
             return row
@@ -621,6 +635,8 @@ def display_results(results):
     table.add_column("AI Generated", style="bright_green")
     table.add_column("Child Exploitation", style="red")
     table.add_column("Child Exploitation Details", style="red", overflow="fold")
+    table.add_column("Extracted Text (OCR)", style="bright_white", overflow="fold")
+    table.add_column("EXIF Data", style="bright_white", overflow="fold")
     for row in results:
         table.add_row(*row)
     console.print("\nProcessed Image Information:")
@@ -640,7 +656,9 @@ def display_results(results):
         "Duration",
         "AI Generated",
         "Child Exploitation",
-        "Child Exploitation Details"
+        "Child Exploitation Details",
+        "Extracted Text (OCR)",
+        "EXIF Data"
     ]
     with open("results.csv", "w", newline="", encoding="utf-8") as csvfile:
         writer = csv.writer(csvfile)
