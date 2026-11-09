@@ -273,6 +273,9 @@ def get_image_hash(pil_image):
 # structural (page/block/line), never words.
 OCR_MIN_CONFIDENCE = 60
 
+# Never upscale beyond this many pixels on a side, even for tiny strips.
+OCR_MAX_UPSCALED_DIMENSION = 12000
+
 
 def preprocess_for_ocr(pil_image):
     """Prepare an image for OCR: grayscale, 3x upscale when small, autocontrast.
@@ -280,12 +283,16 @@ def preprocess_for_ocr(pil_image):
     Tesseract's defaults assume document-scale text; small web text
     (watermarks, captions, usernames) is the number one cause of missed
     reads.  Binarization is deliberately avoided -- it destroys text
-    overlaid on photographic content.
+    overlaid on photographic content -- and autocontrast uses a small
+    cutoff so a single specular pixel cannot flatten the histogram.
     """
     gray = pil_image.convert('L')
     if min(gray.size) < 64:
-        gray = gray.resize((gray.width * 3, gray.height * 3), Image.Resampling.LANCZOS)
-    return ImageOps.autocontrast(gray)
+        factor = min(3.0, OCR_MAX_UPSCALED_DIMENSION / max(gray.size))
+        if factor > 1.0:
+            gray = gray.resize((round(gray.width * factor), round(gray.height * factor)),
+                               Image.Resampling.LANCZOS)
+    return ImageOps.autocontrast(gray, cutoff=1)
 
 
 # Function to extract text from an image using OCR

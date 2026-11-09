@@ -1098,6 +1098,19 @@ class TestOcrExtraction:
         text = sick.extract_text_from_image(small_watermark_image())
         assert "SECRET" in text and "MARKER" in text
 
+    def test_confidence_boundary_sixty_is_kept(self):
+        """conf == 60 is the inclusive boundary."""
+        fake_data = {"text": ["EDGE"], "conf": [60]}
+        with mock.patch("sick.pytesseract.image_to_data", return_value=fake_data):
+            assert sick.extract_text_from_image(small_watermark_image()) == "EDGE"
+
+    def test_pathological_strips_are_not_upscaled(self):
+        """A 20000x10 strip must not upscale to 60000px wide; it stays as-is
+        (downslicing it would destroy the little height it has)."""
+        strip = Image.new("RGB", (20000, 10), (128, 128, 128))
+        processed = sick.preprocess_for_ocr(strip)
+        assert processed.size == (20000, 10)
+
     def test_ocr_confidence_gate_filters_junk(self):
         """Only words with confidence >= 60 survive; blanks and -1 rows drop."""
         fake_data = {
