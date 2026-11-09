@@ -7,7 +7,8 @@ from scipy import stats
 from scipy.stats import binomtest, chi2, entropy
 from colorthief import ColorThief
 from nudenet import NudeDetector
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
+import io
 from rich.console import Console
 from  bs4 import BeautifulSoup
 from rich.table import Table
@@ -211,9 +212,12 @@ def detect_ai_generated(image_path):
 def get_dominant_color(image_path):
     try:
         with Image.open(image_path) as img:
-            if img.mode != 'RGB':
-                img = img.convert('RGB')
-            color_thief = ColorThief(img)
+            # ColorThief accepts a filename or a (binary) file object, not an
+            # open PIL Image, so re-encode the RGB-normalized pixels in memory.
+            buffer = io.BytesIO()
+            img.convert('RGB').save(buffer, format='PNG')
+            buffer.seek(0)
+            color_thief = ColorThief(buffer)
             dominant_color = color_thief.get_color(quality=1)
         return dominant_color
     except OSError as e:
@@ -348,7 +352,7 @@ def detect_potential_child_exploitation(image_path, faces_detected):
         return False, None
 
 # Function to process an image and extract information
-def process_image(image_path, verbose):
+def process_image(image_path):
     downloaded_file = None
     original_url = image_path if not os.path.isfile(image_path) else None
     try:
@@ -430,58 +434,75 @@ def process_image(image_path, verbose):
     return None
 
 # Function to crawl a website and process images
-def crawl(url, depth, verbose):
-    if depth <= 0:
-        return
+def crawl(url, depth, visited=None, seen_images=None, results=None):
+    """Crawl pages up to *depth*, processing images found on each page.
+
+    Tracks visited pages (so link cycles terminate) and already-processed
+    image URLs, stays on the starting page's host, and accumulates result
+    rows across every page so the caller can report them once at the end.
+    """
+    if visited is None:
+        visited = set()
+    if seen_images is None:
+        seen_images = set()
+    if results is None:
+        results = []
+
+    url = url.split('#', 1)[0]  # fragments never change the page
+    if depth <= 0 or url in visited:
+        return results
+    visited.add(url)
 
     try:
-        response = requests.get(url)
+        headers = {'User-Agent': user_agent.random}
+        response = requests.get(url, timeout=10, headers=headers)
         response.raise_for_status()
         soup = BeautifulSoup(response.content, 'html.parser')
-
-        # Extract image URLs
-        image_urls = [urljoin(url, img_tag['src']) for img_tag in soup.select('img[src]')]
-
-        # Process images in parallel
-        with ThreadPoolExecutor() as executor:
-            with Progress() as progress:
-                task = progress.add_task("[green]Processing images...", total=len(image_urls))
-                futures = [executor.submit(process_image, image_url, verbose) for image_url in image_urls]
-                results = []
-                for future in as_completed(futures):
-                    result = future.result()
-                    if result:
-                        results.append(result)
-                    progress.update(task, advance=1)
-
-        # Display and save results
-        if results:
-            display_results(results)
-
-        # Extract links for further crawling
-        next_urls = [urljoin(url, link['href']) for link in soup.select('a[href]')]
-
-        # Crawl next URLs recursively
-        for next_url in next_urls:
-            crawl(next_url, depth - 1, verbose)
-
     except requests.RequestException as e:
         logger.error(f"Error crawling {url}: {e}")
+        return results
 
-def process_local_folder(folder_path, verbose):
+    # Extract image URLs, skipping any already processed on an earlier page
+    image_urls = []
+    for img_tag in soup.select('img[src]'):
+        image_url = urljoin(url, img_tag['src'])
+        if image_url not in seen_images:
+            seen_images.add(image_url)
+            image_urls.append(image_url)
+
+    # Process images in parallel
+    with ThreadPoolExecutor() as executor:
+        with Progress() as progress:
+            task = progress.add_task("[green]Processing images...", total=len(image_urls))
+            futures = [executor.submit(process_image, image_url) for image_url in image_urls]
+            for future in as_completed(futures):
+                result = future.result()
+                if result:
+                    results.append(result)
+                progress.update(task, advance=1)
+
+    # Follow same-host http(s) links only
+    start_host = urlparse(url).netloc
+    for link in soup.select('a[href]'):
+        next_url = urljoin(url, link['href']).split('#', 1)[0]
+        parsed = urlparse(next_url)
+        if parsed.scheme not in ('http', 'https') or parsed.netloc != start_host:
+            continue
+        crawl(next_url, depth - 1, visited, seen_images, results)
+
+    return results
+
+def process_local_folder(folder_path):
     image_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'}
     results = []
-    
+    files = [f for f in Path(folder_path).rglob('*') if f.suffix.lower() in image_extensions]
+
     with Progress() as progress:
-        files = list(Path(folder_path).rglob('*'))
         task = progress.add_task("[green]Processing local images...", total=len(files))
-        
+
         with ThreadPoolExecutor() as executor:
-            futures = []
-            for file_path in files:
-                if file_path.suffix.lower() in image_extensions:
-                    futures.append(executor.submit(process_image, str(file_path), verbose))
-            
+            futures = [executor.submit(process_image, str(file_path)) for file_path in files]
+
             for future in as_completed(futures):
                 try:
                     result = future.result()
@@ -491,7 +512,7 @@ def process_local_folder(folder_path, verbose):
                     logger.error(f"Error processing image: {e}")
                 finally:
                     progress.update(task, advance=1)
-    
+
     return results
 
 def display_results(results):
@@ -543,15 +564,19 @@ def main():
     group.add_argument("-u", "--url", help="The URL to start crawling")
     group.add_argument("-f", "--folder", help="Local folder to scan for images")
     parser.add_argument("-d", "--depth", type=int, default=1, help="Depth of crawling (for URL mode)")
-    parser.add_argument("-v", "--verbose", action='store_true', help="Increase output verbosity (show errors)")
+    parser.add_argument("-v", "--verbose", action='store_true', help="Enable debug logging")
     args = parser.parse_args()
 
+    if args.verbose:
+        logger.setLevel(logging.DEBUG)
+
     if args.url:
-        crawl(args.url, args.depth, args.verbose)
-    elif args.folder:
-        results = process_local_folder(args.folder, args.verbose)
-        if results:
-            display_results(results)
+        results = crawl(args.url, args.depth)
+    else:
+        results = process_local_folder(args.folder)
+
+    if results:
+        display_results(results)
 
 if __name__ == "__main__":
     main()
