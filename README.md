@@ -60,10 +60,6 @@ Contributions to SiCK are welcome.
 
 SiCK is released under the MIT License.
 
-## Contact/Support
-
-For support or other queries, contact [geeknik](https://x.com/geeknik) on X.
-
 ## Acknowledgments
 
 Thanks to all the contributors and supporters of the SiCK project:
