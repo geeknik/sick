@@ -958,6 +958,9 @@ def display_results(results, output_path="results.csv"):
         "Extracted Text (OCR)",
         "EXIF Data"
     ]
+    output_dir = os.path.dirname(output_path)
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
     with open(output_path, "w", newline="", encoding="utf-8") as csvfile:
         writer = csv.writer(csvfile)
         writer.writerow(csv_headers)  # Write header row

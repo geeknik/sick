@@ -698,7 +698,14 @@ class TestCsvSafety:
         with open("results.csv", newline="", encoding="utf-8") as f:
             written = list(csv.reader(f))
         for cell in written[1]:
-            assert not cell.startswith(("=", "+", "@")), cell
+            assert not cell.startswith(("=", "+", "-", "@", "\t", "\r")), cell
+
+    def test_output_creates_missing_directories(self, tmp_path, monkeypatch):
+        """-o into a nonexistent directory must not lose the report."""
+        monkeypatch.chdir(tmp_path)
+        rows = [make_row("http://a.test/1.png")]
+        sick.display_results(rows, str(tmp_path / "nested" / "dirs" / "report.csv"))
+        assert (tmp_path / "nested" / "dirs" / "report.csv").exists()
 
 
 class TestOutputOption:
