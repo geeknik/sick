@@ -17,7 +17,6 @@ grpcio
 h5py
 humanfriendly
 idna
-imagehash
 importlib-metadata
 importlib-resources
 keras

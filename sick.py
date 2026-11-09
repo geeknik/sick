@@ -1,6 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from PIL import ExifTags, UnidentifiedImageError, ImageChops, ImageFilter
-import imagehash
+from PIL import ExifTags, UnidentifiedImageError, ImageChops
 from fake_useragent import UserAgent
 from rich.progress import Progress
 from colorthief import ColorThief
@@ -290,30 +289,151 @@ def download_image(url):
         logger.error(f"Unexpected error downloading image from {url}: {e}")
     return None
 
+# Generator names that appear in Software/CreatorTool-style metadata tags
+GENERATOR_SOFTWARE_HINTS = (
+    'midjourney', 'dall-e', 'dalle', 'stable diffusion', 'stablediffusion',
+    'sdxl', 'comfyui', 'automatic1111', 'invokeai', 'novelai', 'fooocus',
+    'firefly', 'imagen', 'gpt-image', 'chatgpt', 'gemini', 'flux',
+    'leonardo', 'nightcafe', 'craiyon', 'runwayml', 'seedream',
+)
+
+# PNG tEXt keys that are generator metadata by themselves
+GENERATOR_TEXT_CHUNK_KEYS = {
+    'sd-metadata': 'Stable Diffusion metadata chunk',
+    'dream': 'Stable Diffusion (dream) metadata chunk',
+    'invokeai_metadata': 'InvokeAI metadata chunk',
+    'fooocus_scheme': 'Fooocus metadata chunk',
+}
+
+# Metadata keys whose VALUES are scanned for generator names
+SOFTWARE_VALUE_KEYS = ('software', 'creatortool', 'creator_tool')
+
+
+def scan_generator_metadata(image_path):
+    """Search an image's bytes and metadata for generator provenance.
+
+    Looks for Stable Diffusion / ComfyUI / NovelAI parameter chunks, known
+    generator names in software tags, IPTC trainedAlgorithmicMedia source
+    declarations, and C2PA content-credential manifests.  Returns a list of
+    human-readable indicators.  An empty list proves nothing: re-encoding,
+    screenshots and most social platforms strip metadata entirely.
+    """
+    indicators = []
+
+    raw = Path(image_path).read_bytes()
+    # C2PA manifests need BOTH a manifest box (PNG caBX chunk / JPEG APP11
+    # JUMBF) and a claim label -- bare "c2pa" bytes occur by chance in
+    # compressed image data.
+    has_manifest_box = b'caBX' in raw or b'JUMBF' in raw
+    has_claim = (b'c2pa.claim' in raw or b'c2pa.signature' in raw
+                 or b'c2pa.actions' in raw)
+    if has_manifest_box and has_claim:
+        indicators.append('C2PA content credentials manifest')
+    if b'trainedAlgorithmicMedia' in raw:
+        indicators.append('IPTC digital source type marks trained algorithmic media')
+
+    with Image.open(image_path) as img:
+        for key, value in (getattr(img, 'text', {}) or {}).items():
+            key_l = key.lower()
+            value_s = str(value)
+            value_l = value_s.lower()
+            if key_l == 'parameters' and 'steps:' in value_l \
+                    and ('sampler' in value_l or 'seed:' in value_l):
+                indicators.append('Stable Diffusion parameters chunk')
+            if key_l in GENERATOR_TEXT_CHUNK_KEYS:
+                indicators.append(GENERATOR_TEXT_CHUNK_KEYS[key_l])
+            if key_l in ('prompt', 'workflow') \
+                    and ('class_type' in value_l or '"nodes"' in value_l):
+                indicators.append('ComfyUI workflow graph chunk')
+            if key_l == 'comment' and '"uc"' in value_l:
+                indicators.append('NovelAI generation metadata (Comment chunk)')
+            if key_l in SOFTWARE_VALUE_KEYS:
+                for hint in GENERATOR_SOFTWARE_HINTS:
+                    if hint in value_l:
+                        indicators.append(f'Generator software tag: {value_s.strip()[:60]}')
+                        break
+
+        if hasattr(img, 'getexif'):
+            exif = img.getexif() or {}
+            for tag in (11, 270, 305, 37510):
+                # ProcessingSoftware, ImageDescription, Software, UserComment
+                value = exif.get(tag)
+                if value is None:
+                    continue
+                value_l = str(value).lower()
+                if 'steps:' in value_l and 'sampler' in value_l:
+                    indicators.append('Stable Diffusion parameters in EXIF UserComment')
+                for hint in GENERATOR_SOFTWARE_HINTS:
+                    if hint in value_l:
+                        indicators.append(f'Generator software tag: {str(value)[:60]}')
+                        break
+
+    return indicators
+
+
+def spectral_ai_analysis(gray):
+    """Return (gan_grid_score, high_frequency_ratio) for a grayscale image.
+
+    GAN up-samplers leave periodic grid peaks in the Fourier spectrum
+    (Frank et al. 2020); diffusion models underestimate high frequencies
+    (Durall & Keuper 2020; F2C 2025).  The spectrum is computed on the
+    high-pass residual (image minus its median-filtered copy), the standard
+    preprocessing, and reduced to an azimuthally-averaged radial profile.
+    """
+    gray = np.asarray(gray, dtype=np.float64)
+    if gray.size < 256:
+        return 0.0, 0.0
+    blurred = cv2.medianBlur(gray.astype(np.uint8), 5).astype(np.float64)
+    residual = gray - blurred
+    if float(np.sum(residual * residual)) < 1e-9:
+        return 0.0, 0.0  # perfectly flat
+
+    spectrum = np.abs(np.fft.fftshift(np.fft.fft2(residual))) ** 2
+    h, w = spectrum.shape
+    y, x = np.ogrid[:h, :w]
+    radius = np.sqrt((y - h // 2) ** 2 + (x - w // 2) ** 2).astype(int)
+    max_r = min(h, w) // 2
+    counts = np.bincount(radius.ravel(), minlength=radius.max() + 1)
+    power = np.bincount(radius.ravel(), weights=spectrum.ravel(),
+                        minlength=radius.max() + 1)
+    profile = power / np.maximum(counts, 1)
+
+    band = profile[int(0.25 * max_r):int(0.95 * max_r) + 1]
+    smoothed = np.convolve(band, np.ones(3) / 3, mode='same')
+    peak_ratio = float(np.max(smoothed) / (np.median(smoothed) + 1e-12))
+    gan_grid = float(np.clip((peak_ratio - 4.0) / 6.0, 0.0, 1.0))
+
+    total = float(np.sum(profile[1:]))
+    hf_ratio = float(np.sum(profile[int(0.7 * max_r):]) / (total + 1e-12))
+    return gan_grid, hf_ratio
+
+
 def detect_ai_generated(image_path):
+    """Heuristic AI-generated image detection.
+
+    Layer 1, generator provenance metadata (Stable Diffusion / ComfyUI /
+    NovelAI parameter chunks, generator Software tags, IPTC
+    trainedAlgorithmicMedia, C2PA manifests), is near-deterministic when
+    present and short-circuits with a high score.  Layer 2, Fourier-domain
+    heuristics, scores GAN up-sampling grid artifacts and a diffusion-style
+    high-frequency deficit; the smoothness component alone cannot cross the
+    detection threshold because naturally smooth images share that property.
+    Returns (detected, score).
+    """
     try:
+        indicators = scan_generator_metadata(image_path)
+        if indicators:
+            for indicator in indicators:
+                logger.info(f"AI-generation provenance in {image_path}: {indicator}")
+            return True, 0.95
+
         with Image.open(image_path) as img:
-            # Convert to grayscale
-            img_gray = img.convert('L')
-            
-            # Compute the difference hash
-            dhash = imagehash.dhash(img_gray)
-            
-            # Compute the wavelet hash
-            whash = imagehash.whash(img_gray)
-            
-            # Compute the perceptual hash
-            phash = imagehash.phash(img_gray)
-            
-            # Check for unnaturally smooth gradients
-            edges = img_gray.filter(ImageFilter.FIND_EDGES)
-            edge_ratio = np.sum(np.array(edges) > 0) / (img_gray.width * img_gray.height)
-            
-            # Combine metrics (you may need to adjust these thresholds based on experimentation)
-            ai_score = (dhash.hash.sum() / 256 + whash.hash.sum() / 256 + phash.hash.sum() / 256) / 3
-            ai_score = (ai_score + (1 - edge_ratio)) / 2  # Incorporate edge information
-            
-            return ai_score > 0.6, ai_score  # Threshold can be adjusted
+            gray = np.asarray(img.convert('L'), dtype=np.float64)
+
+        gan_grid, hf_ratio = spectral_ai_analysis(gray)
+        smooth_component = float(np.clip((0.35 - hf_ratio) / 0.35, 0.0, 1.0))
+        score = 0.6 * gan_grid + 0.4 * smooth_component
+        return bool(score >= 0.5), float(np.clip(score, 0.0, 1.0))
 
     except Exception as e:
         logger.error(f"Error during AI generation detection in image: {image_path}. Error: {e}")

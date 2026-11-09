@@ -296,6 +296,109 @@ def lsb_embed(arr, rng, fraction=1.0):
     return out
 
 
+def png_with_text(path, text_dict):
+    """Write a PNG carrying tEXt chunks (like SD/ComfyUI write)."""
+    from PIL.PngImagePlugin import PngInfo
+    info = PngInfo()
+    for key, value in text_dict.items():
+        info.add_text(key, value)
+    Image.new("RGB", (32, 32), (100, 150, 90)).save(path, pnginfo=info)
+    return path
+
+
+def append_png_chunk(path, chunk_type, data):
+    """Append a custom chunk to a PNG after IEND (readers ignore it)."""
+    import struct
+    import zlib as _zlib
+    chunk = struct.pack(">I", len(data)) + chunk_type + data
+    chunk += struct.pack(">I", _zlib.crc32(chunk_type + data) & 0xFFFFFFFF)
+    with open(path, "ab") as f:
+        f.write(chunk)
+
+
+SD_PARAMS = (
+    "masterpiece, best quality\n"
+    "Negative prompt: blurry, lowres\n"
+    "Steps: 28, Sampler: DPM++ 2M Karras, CFG scale: 7, "
+    "Seed: 1234567890, Size: 832x1216, Model: animagineXL_v31"
+)
+
+
+class TestAIDetectionMetadata:
+    """Generator-metadata provenance scanning (deterministic signals)."""
+
+    def test_flags_stable_diffusion_parameters_chunk(self, tmp_path):
+        path = png_with_text(tmp_path / "sd.png", {"parameters": SD_PARAMS})
+        indicators = sick.scan_generator_metadata(str(path))
+        assert any("Stable Diffusion" in i for i in indicators)
+        detected, score = sick.detect_ai_generated(str(path))
+        assert detected and score >= 0.9
+
+    def test_flags_comfyui_workflow_chunks(self, tmp_path):
+        graph = '{"3": {"class_type": "KSampler", "inputs": {}}}'
+        path = png_with_text(tmp_path / "comfy.png",
+                             {"prompt": graph, "workflow": graph})
+        assert any("ComfyUI" in i for i in sick.scan_generator_metadata(str(path)))
+
+    def test_flags_generator_software_exif(self, tmp_path):
+        exif = Image.Exif()
+        exif[305] = "Midjourney Bot"  # EXIF Software tag
+        path = tmp_path / "mj.jpg"
+        Image.new("RGB", (32, 32), (10, 10, 10)).save(path, exif=exif.tobytes())
+        assert any("Midjourney" in i for i in sick.scan_generator_metadata(str(path)))
+
+    def test_flags_c2pa_manifest(self, tmp_path):
+        path = png_with_text(tmp_path / "c2pa.png", {})
+        append_png_chunk(path, b"caBX", b"\x00\x00\x00" + b"c2pa.claim manifest data")
+        indicators = sick.scan_generator_metadata(str(path))
+        assert any("C2PA" in i for i in indicators)
+        detected, score = sick.detect_ai_generated(str(path))
+        assert detected and score >= 0.9
+
+    def test_stray_c2pa_bytes_alone_are_not_a_manifest(self, tmp_path):
+        """Bare 'c2pa' bytes occur by chance in compressed data; require the box."""
+        path = png_with_text(tmp_path / "stray.png", {})
+        with open(path, "ab") as f:
+            f.write(b"c2pa")
+        assert sick.scan_generator_metadata(str(path)) == []
+
+    def test_flags_iptc_trained_algorithmic_media(self, tmp_path):
+        xmp = '<x:xmpmk xmlns:Iptc4xmpCore="..."><Iptc4xmpCore:DigitalSourceType>trainedAlgorithmicMedia</Iptc4xmpCore:DigitalSourceType></x:xmpmk>'
+        path = png_with_text(tmp_path / "iptc.png", {"XML:com.adobe.xmp": xmp})
+        assert any("trained algorithmic media" in i for i in sick.scan_generator_metadata(str(path)))
+
+    def test_clean_png_has_no_indicators(self, tmp_path):
+        path = make_png_file(tmp_path / "clean.png")
+        assert sick.scan_generator_metadata(str(path)) == []
+        detected, score = sick.detect_ai_generated(str(path))
+        assert not detected and score < 0.5
+
+
+class TestAISpectralAnalysis:
+    """Fourier-domain synthesis-artifact heuristics."""
+
+    def test_periodic_spectral_artifact_scores_high(self, tmp_path):
+        """A strong periodic spectral peak (the GAN grid-artifact class)."""
+        rng = np.random.default_rng(5)
+        noise = rng.integers(0, 256, size=(128, 128), dtype=np.uint8).astype(np.float64)
+        stripes = 60 * np.sin(2 * np.pi * 24 * np.arange(128) / 128.0)
+        synthetic = np.clip(noise + stripes, 0, 255).astype(np.uint8)
+        path = tmp_path / "grid.png"
+        Image.fromarray(synthetic, "L").save(path)
+        gray = np.asarray(Image.open(path).convert("L"), dtype=np.float64)
+        gan_grid, _ = sick.spectral_ai_analysis(gray)
+        assert gan_grid > 0.5
+
+    def test_natural_noise_image_not_flagged(self, tmp_path):
+        rng = np.random.default_rng(6)
+        noise = rng.integers(0, 256, size=(128, 128), dtype=np.uint8)
+        path = tmp_path / "noise.png"
+        Image.fromarray(noise, "L").save(path)
+        detected, score = sick.detect_ai_generated(str(path))
+        assert not detected
+        assert score < 0.5
+
+
 class TestImageHelpers:
     """Characterization tests for the pure image-analysis helpers."""
 
