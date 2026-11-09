@@ -636,6 +636,38 @@ def detect_potential_child_exploitation(image_path, faces_detected):
         logger.error(f"Error during child exploitation detection in image: {image_path}. Error: {e}")
         return False, None
 
+def extract_gif_frames(image_path, max_frames=4):
+    """Extract up to *max_frames* GIF frames as temporary PNG files.
+
+    Frames are sampled at evenly spaced indices spanning the whole
+    animation (first and last frame always included), so content appearing
+    late in the loop is still analyzed.  On a corrupt or truncated GIF the
+    already-extracted files are removed before the error propagates.
+    Caller must remove the returned files.
+    """
+    frame_paths = []
+    try:
+        with Image.open(image_path) as gif:
+            total = getattr(gif, "n_frames", 1)
+            if total <= max_frames:
+                indices = list(range(total))
+            else:
+                indices = sorted({round(i * (total - 1) / (max_frames - 1))
+                                  for i in range(max_frames)})
+            for index in indices:
+                gif.seek(index)
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as frame_file:
+                    # register before decoding: a decode failure must still
+                    # clean up the file this very iteration created
+                    frame_paths.append(frame_file.name)
+                    gif.convert("RGB").save(frame_file.name, format="PNG")
+    except Exception:
+        for frame_path in frame_paths:
+            Path(frame_path).unlink(missing_ok=True)
+        raise
+    return frame_paths
+
+
 # Function to process an image and extract information
 def process_image(image_path):
     downloaded_file = None
@@ -677,14 +709,62 @@ def process_image(image_path):
 
             if real_mime_type == 'image/gif':
                 logger.info("Processing GIF image")
-                dominant_color = 'N/A'
-                faces_found = 'N/A'
-                stego_detected, stego_score, hidden_text = False, None, None
-                age_estimation = 'N/A'
-                frame_count = img_obj.n_frames
-                duration = img_obj.info.get('duration', 'N/A')
-                ai_generated, ai_score = False, None
-                child_exploitation_detected, child_exploitation_details = False, None
+                # GIFs are palette-based: LSB stego/AI heuristics would be
+                # misleading on decoded rasters, so those stay N/A, but the
+                # content detectors run on frames sampled across the animation.
+                frame_paths = []
+                try:
+                    frame_paths = extract_gif_frames(image_path, max_frames=4)
+                    worst_nudity = {"result": [], "score": 0}
+                    for frame_path in frame_paths:
+                        frame_nudity = detect_nudity(frame_path)
+                        if frame_nudity['score'] > worst_nudity['score']:
+                            worst_nudity = frame_nudity
+                    nudity_results = worst_nudity
+
+                    first_frame = frame_paths[0] if frame_paths else None
+                    if first_frame:
+                        dominant_color = get_dominant_color(first_frame)
+                        with Image.open(first_frame) as frame_img:
+                            faces_found = detect_faces(frame_img)
+                    else:
+                        dominant_color = 'N/A'
+                        faces_found = False
+                    frame_age = detect_age(first_frame) if faces_found and first_frame else None
+                    age_estimation = frame_age if frame_age is not None else 'N/A'
+                    stego_detected, stego_score = False, None
+                    # Consult the worst-frame nudity evidence (thresholds mirror
+                    # detect_potential_child_exploitation) rather than re-running
+                    # the detector on the first frame only.
+                    if faces_found and frame_age is not None and frame_age < 18 \
+                            and nudity_results['score'] > 0.7:
+                        child_exploitation_detected = True
+                        child_exploitation_details = (
+                            f"Potential child exploitation detected. Estimated age: {frame_age}, "
+                            f"Nudity score: {nudity_results['score']}")
+                    else:
+                        child_exploitation_detected, child_exploitation_details = False, None
+                    with Image.open(image_path) as gif:
+                        frame_count = getattr(gif, 'n_frames', 1)
+                        duration = gif.info.get('duration', 'N/A')
+                    ai_generated, ai_score = False, None
+                    hidden_text = None
+                except Exception as e:
+                    logger.warning(f"GIF frame analysis failed for {image_path}: {e}")
+                    nudity_results = {"result": ["GIF frame extraction failed"], "score": 0.0}
+                    dominant_color = 'N/A'
+                    faces_found = False
+                    age_estimation = 'N/A'
+                    stego_detected, stego_score = False, None
+                    hidden_text = None
+                    child_exploitation_detected, child_exploitation_details = False, None
+                    frame_count = 'N/A'
+                    duration = 'N/A'
+                    ai_generated, ai_score = False, None
+                finally:
+                    for frame_path in frame_paths:
+                        if os.path.exists(frame_path):
+                            os.remove(frame_path)
             else:
                 logger.info("Processing non-GIF image")
                 dominant_color = get_dominant_color(image_path)
@@ -695,8 +775,7 @@ def process_image(image_path):
                 duration = 'N/A'
                 ai_generated, ai_score = detect_ai_generated(image_path)
                 child_exploitation_detected, child_exploitation_details = detect_potential_child_exploitation(image_path, faces_found)
-
-            nudity_results = detect_nudity(image_path)
+                nudity_results = detect_nudity(image_path)
 
             # Surface the OCR and EXIF results in the output row
             ocr_text = ' '.join(detected_text.split())[:200] if detected_text and detected_text.strip() else "None detected"

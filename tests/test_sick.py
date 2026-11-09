@@ -498,6 +498,162 @@ class TestHiddenTextExtraction:
         assert sick.detect_hidden_text(gradient_array()) is None
 
 
+def make_gif(path, n_frames=3, size=(24, 24), colors=((255, 0, 0), (0, 255, 0), (0, 0, 255))):
+    """Write a deterministic animated GIF."""
+    frames = [Image.new("RGB", size, colors[i % len(colors)]) for i in range(n_frames)]
+    frames[0].save(path, save_all=True, append_images=frames[1:], duration=100, loop=0)
+    return path
+
+
+class TestGifAnalysis:
+    """GIFs must be analyzed per-frame instead of being skipped."""
+
+    def test_extract_gif_frames_returns_png_frames(self, tmp_path):
+        gif = make_gif(tmp_path / "anim.gif", n_frames=3)
+        frames = sick.extract_gif_frames(str(gif), max_frames=4)
+        try:
+            assert 1 <= len(frames) <= 4
+            assert len(frames) == 3  # 3-frame GIF, max 4 -> all frames
+            for frame_path in frames:
+                assert frame_path.endswith(".png")
+                with Image.open(frame_path) as img:
+                    assert img.format == "PNG" and img.size == (24, 24)
+        finally:
+            for frame_path in frames:
+                Path(frame_path).unlink(missing_ok=True)
+
+    def test_extract_gif_frames_spreads_long_animations(self, tmp_path):
+        """A 40-frame GIF with max_frames=4 must sample across the animation."""
+        gif = make_gif(tmp_path / "long.gif", n_frames=40, size=(8, 8))
+        frames = sick.extract_gif_frames(str(gif), max_frames=4)
+        try:
+            assert len(frames) == 4
+        finally:
+            for frame_path in frames:
+                Path(frame_path).unlink(missing_ok=True)
+
+    def test_gif_nudity_runs_on_every_frame_and_reports_worst(self, tmp_path, monkeypatch):
+        gif = make_gif(tmp_path / "anim.gif", n_frames=3)
+        monkeypatch.setattr(sick.tempfile, "tempdir", str(tmp_path / "tmp"))
+        (tmp_path / "tmp").mkdir()
+        scores = iter([{"result": [], "score": 0.2},
+                       {"result": [{"class": "EXPOSED_BREAST", "score": 0.9}], "score": 0.9},
+                       {"result": [], "score": 0.1}])
+        nudity = mock.MagicMock(side_effect=lambda p: next(scores))
+        with mock.patch("sick.initialize_nude_detector"), \
+                mock.patch("sick.detect_nudity", nudity), \
+                mock.patch("sick.detect_faces", return_value=False), \
+                mock.patch("sick.detect_age", return_value=None), \
+                mock.patch("sick.get_dominant_color", return_value=(1, 2, 3)), \
+                mock.patch("sick.detect_potential_child_exploitation", return_value=(False, None)):
+            row = sick.process_image(str(gif))
+        assert row is not None
+        assert nudity.call_count == 3
+        assert all(call.args[0].endswith(".png") for call in nudity.call_args_list)
+        assert "0.90" in row[4] and "EXPOSED_BREAST" in row[4]
+
+    def test_gif_frames_are_cleaned_up(self, tmp_path, monkeypatch):
+        gif = make_gif(tmp_path / "anim.gif", n_frames=3)
+        tmpdir = tmp_path / "tmp"
+        tmpdir.mkdir()
+        monkeypatch.setattr(sick.tempfile, "tempdir", str(tmpdir))
+        with mock.patch("sick.initialize_nude_detector"), \
+                mock.patch("sick.detect_nudity", return_value={"result": [], "score": 0}), \
+                mock.patch("sick.detect_faces", return_value=False), \
+                mock.patch("sick.get_dominant_color", return_value=(1, 2, 3)), \
+                mock.patch("sick.detect_potential_child_exploitation", return_value=(False, None)):
+            row = sick.process_image(str(gif))
+        assert row is not None
+        assert list(tmpdir.glob("*.png")) == []  # frames removed
+
+    def test_gif_reports_frame_count_and_duration(self, tmp_path, monkeypatch):
+        gif = make_gif(tmp_path / "anim.gif", n_frames=3)
+        tmpdir = tmp_path / "tmp"
+        tmpdir.mkdir()
+        monkeypatch.setattr(sick.tempfile, "tempdir", str(tmpdir))
+        with mock.patch("sick.initialize_nude_detector"), \
+                mock.patch("sick.detect_nudity", return_value={"result": [], "score": 0}), \
+                mock.patch("sick.detect_faces", return_value=False), \
+                mock.patch("sick.get_dominant_color", return_value=(1, 2, 3)), \
+                mock.patch("sick.detect_potential_child_exploitation", return_value=(False, None)):
+            row = sick.process_image(str(gif))
+        assert row is not None
+        assert row[8] == "3"     # Frame Count
+        assert row[9] == "100"   # Duration (ms)
+
+
+    def test_gif_sampling_covers_animation_tail(self, tmp_path):
+        """Even sampling must include the LAST frame, not just the head."""
+        grays = [Image.new("L", (8, 8), i * 30) for i in range(8)]
+        gif = tmp_path / "gradual.gif"
+        grays[0].save(gif, save_all=True, append_images=grays[1:], duration=100, loop=0)
+        frames = sick.extract_gif_frames(str(gif), max_frames=4)
+        try:
+            sampled = []
+            for frame_path in frames:
+                with Image.open(frame_path) as img:
+                    sampled.append(img.getpixel((0, 0))[0])
+            assert sampled[0] == 0          # first frame
+            assert sampled[-1] == 7 * 30    # last frame analyzed
+        finally:
+            for frame_path in frames:
+                Path(frame_path).unlink(missing_ok=True)
+
+    def test_extract_gif_frames_cleans_up_on_failure(self, tmp_path, monkeypatch):
+        """A corrupt GIF must not leak decoded frame PNGs into the temp dir."""
+        full = make_gif(tmp_path / "anim.gif", n_frames=8)
+        data = full.read_bytes()
+        truncated = tmp_path / "truncated.gif"
+        truncated.write_bytes(data[:int(len(data) * 0.5)])
+        tmpdir = tmp_path / "tmp"
+        tmpdir.mkdir()
+        monkeypatch.setattr(sick.tempfile, "tempdir", str(tmpdir))
+        with pytest.raises(Exception):
+            sick.extract_gif_frames(str(truncated))
+        assert list(tmpdir.glob("*.png")) == []
+
+    def test_truncated_gif_still_returns_row_without_leaking(self, tmp_path, monkeypatch):
+        """Frame-decode failure must degrade the row, not drop it or leak files."""
+        full = make_gif(tmp_path / "anim.gif", n_frames=8)
+        data = full.read_bytes()
+        truncated = tmp_path / "truncated.gif"
+        truncated.write_bytes(data[:int(len(data) * 0.5)])
+        tmpdir = tmp_path / "tmp"
+        tmpdir.mkdir()
+        monkeypatch.setattr(sick.tempfile, "tempdir", str(tmpdir))
+        with mock.patch("sick.initialize_nude_detector"), \
+                mock.patch("sick.detect_nudity", return_value={"result": [], "score": 0}), \
+                mock.patch("sick.detect_faces", return_value=False), \
+                mock.patch("sick.detect_age", return_value=None), \
+                mock.patch("sick.get_dominant_color", return_value=(1, 2, 3)), \
+                mock.patch("sick.detect_potential_child_exploitation", return_value=(False, None)):
+            row = sick.process_image(str(truncated))
+        assert row is not None
+        assert "extraction failed" in row[4]
+        assert row[8] == "N/A"  # frame count unknowable on corrupt file
+        assert list(tmpdir.glob("*.png")) == []
+
+    def test_gif_child_exploitation_uses_worst_frame_nudity(self, tmp_path, monkeypatch):
+        """The CSAM screen must consult the worst frame, not re-run frame 0."""
+        gif = make_gif(tmp_path / "anim.gif", n_frames=3)
+        tmpdir = tmp_path / "tmp"
+        tmpdir.mkdir()
+        monkeypatch.setattr(sick.tempfile, "tempdir", str(tmpdir))
+        scores = iter([{"result": [], "score": 0.1},
+                       {"result": [], "score": 0.95},
+                       {"result": [], "score": 0.1}])
+        nudity = mock.MagicMock(side_effect=lambda p: next(scores))
+        with mock.patch("sick.initialize_nude_detector"), \
+                mock.patch("sick.detect_nudity", nudity), \
+                mock.patch("sick.detect_faces", return_value=True), \
+                mock.patch("sick.detect_age", return_value=15), \
+                mock.patch("sick.get_dominant_color", return_value=(1, 2, 3)):
+            row = sick.process_image(str(gif))
+        assert row is not None
+        assert row[11] == "Yes"                     # Child Exploitation column
+        assert "0.95" in row[12]                    # worst-frame score cited
+
+
 class TestImageHelpers:
     """Characterization tests for the pure image-analysis helpers."""
 
