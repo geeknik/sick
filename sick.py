@@ -676,14 +676,34 @@ def detect_ai_generated(image_path):
         logger.error(f"Error during AI generation detection in image: {image_path}. Error: {e}")
         return False, None
 
+# Dominant color is scale-invariant: analyze a thumbnail, not full pixels.
+DOMINANT_COLOR_MAX_SIDE = 200
+
+
+def thumbnail_for_color(pil_image, max_side=DOMINANT_COLOR_MAX_SIDE):
+    """Return an RGB copy shrunk to at most *max_side* on its longest side.
+
+    Never upscales; aspect ratio preserved.  Feeding the thumbnail (not the
+    full image) to ColorThief keeps both the PNG re-encode and the
+    every-pixel k-means cheap: a 3000x2000 image takes ~10s at full
+    resolution and milliseconds at thumbnail scale.
+    """
+    img = pil_image.convert('RGB')
+    scale = max_side / max(img.size)
+    if scale < 1.0:
+        img = img.resize((max(1, round(img.width * scale)),
+                          max(1, round(img.height * scale))),
+                         Image.Resampling.LANCZOS)
+    return img
+
+
 # Function to get the dominant color of an image
 def get_dominant_color(image_path):
     try:
         with Image.open(image_path) as img:
-            # ColorThief accepts a filename or a (binary) file object, not an
-            # open PIL Image, so re-encode the RGB-normalized pixels in memory.
+            thumbnail = thumbnail_for_color(img)
             buffer = io.BytesIO()
-            img.convert('RGB').save(buffer, format='PNG')
+            thumbnail.save(buffer, format='PNG')
             buffer.seek(0)
             color_thief = ColorThief(buffer)
             dominant_color = color_thief.get_color(quality=1)

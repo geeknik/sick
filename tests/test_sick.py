@@ -1335,6 +1335,30 @@ class TestNudityDetection:
         assert "(Score: 0.91)" in row[4]
 
 
+class TestDominantColor:
+    """Dominant color: thumbnail-scale analysis, correct tones."""
+
+    def test_thumbnail_bounds_and_aspect(self):
+        big = Image.new("RGB", (3000, 2000), (10, 20, 30))
+        thumb = sick.thumbnail_for_color(big)
+        assert max(thumb.size) <= 200
+        assert abs(thumb.width / thumb.height - 1.5) < 0.02  # aspect kept
+        small = Image.new("RGB", (80, 60), (1, 2, 3))
+        assert sick.thumbnail_for_color(small).size == (80, 60)  # never upscaled
+
+    def test_dominant_color_of_two_tone_image(self, tmp_path):
+        """Half red / half blue must yield one of the two actual tones."""
+        img = Image.new("RGB", (100, 100), (220, 10, 10))
+        for y in range(50):
+            for x in range(100):
+                img.putpixel((x, y), (10, 10, 220))
+        path = tmp_path / "twotone.png"
+        img.save(path)
+        red, green, blue = sick.get_dominant_color(str(path))
+        assert red > 150 and blue < 100 or blue > 150 and red < 100
+        assert green < 100
+
+
 class TestImageHelpers:
     """Characterization tests for the pure image-analysis helpers."""
 
