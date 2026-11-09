@@ -842,6 +842,8 @@ def detect_age(image_path):
             if float(face.get('face_confidence', 1.0) or 0.0) <= 0.0:
                 continue
             try:
+                # truncation (not rounding) is deliberate: conservative for
+                # an age < 18 screen (17.9 estimates as 17)
                 ages.append(int(float(face.get('age'))))
             except (TypeError, ValueError):
                 continue

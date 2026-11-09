@@ -1,8 +1,9 @@
 [FORMAT]
 # Pre-existing lines run up to ~134 chars; wrap only beyond that.
 max-line-length=140
-# Single-file tool; the module grows with features rather than splitting.
-max-module-lines=1400
+# The single-file tool and its one-class-per-feature test suite grow
+# with rounds rather than splitting.
+max-module-lines=2000
 
 [MESSAGES CONTROL]
 disable=

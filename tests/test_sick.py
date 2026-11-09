@@ -1254,6 +1254,21 @@ class TestAgeEstimation:
         assert "14" in details
 
 
+    def test_mixed_fallback_and_real_face(self):
+        """The gate discards only the fallback entry, not all results."""
+        faces = [{"age": 28, "face_confidence": 0.0},
+                 {"age": 12, "face_confidence": 0.9}]
+        with mock.patch("sick.DeepFace.analyze", return_value=faces):
+            assert sick.detect_age("irrelevant.jpg") == 12
+
+    def test_analyze_call_contract(self):
+        analyze = mock.MagicMock(return_value=[])
+        with mock.patch("sick.DeepFace.analyze", analyze):
+            sick.detect_age("irrelevant.jpg")
+        analyze.assert_called_once_with(
+            "irrelevant.jpg", actions=['age'], enforce_detection=False, silent=True)
+
+
 class TestImageHelpers:
     """Characterization tests for the pure image-analysis helpers."""
 
