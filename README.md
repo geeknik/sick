@@ -30,6 +30,13 @@ source env/bin/activate
 pip install -r requirements.txt
 ```
 
+## Testing
+Run the unit test suite with:
+```bash
+pip install -r requirements-dev.txt
+python -m pytest tests/
+```
+
 ## Usage
 Run SiCK using the following command:
 ```bash
@@ -37,7 +44,7 @@ python sick.py -d [DEPTH] [URL] (-v)
 ```
 - `DEPTH`: Depth for web crawling. (required)
 - `URL`: The URL to start crawling. (required)
-- `VERBOSE`: enable error messages (optional)
+- `VERBOSE`: enable debug logging (optional)
 
 ![Screenshot_09:34:17_12-04-2024](https://github.com/geeknik/sick/assets/466878/ae52d61a-f37a-47f1-8b33-76368fba3105)
 
@@ -47,7 +54,7 @@ Contributions to SiCK are welcome.
 
 ## License
 
-SiCK is released under the GPLv3 License.
+SiCK is released under the MIT License.
 
 ## Contact/Support
 
