@@ -824,10 +824,29 @@ def detect_hidden_text(np_img):
         return None
 
 def detect_age(image_path):
+    """Return the youngest detected age in an image, or None.
+
+    DeepFace lists one entry per detected face in arbitrary order; the
+    YOUNGEST is the one the child-exploitation screen must see (taking the
+    first entry could silently ignore a child standing beside an adult).
+    Entries with face_confidence == 0 are DeepFace's whole-image fallback
+    (an 'age' of the scenery under enforce_detection=False) and are
+    discarded.
+    """
     try:
-        result = DeepFace.analyze(image_path, actions=['age'], enforce_detection=False)
-        if isinstance(result, list) and len(result) > 0:
-            return result[0].get('age')
+        result = DeepFace.analyze(image_path, actions=['age'],
+                                  enforce_detection=False, silent=True)
+        faces = result if isinstance(result, list) else [result]
+        ages = []
+        for face in faces:
+            if float(face.get('face_confidence', 1.0) or 0.0) <= 0.0:
+                continue
+            try:
+                ages.append(int(float(face.get('age'))))
+            except (TypeError, ValueError):
+                continue
+        if ages:
+            return min(ages)
         logger.warning(f"No face detected for age estimation in image: {image_path}")
         return None
     except ValueError as e:

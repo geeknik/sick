@@ -1216,6 +1216,44 @@ class TestFaceDetection:
             sick._face_cascades = saved_cache  # restore for later tests
 
 
+class TestAgeEstimation:
+    """Age estimation: youngest face wins, fallback junk discarded."""
+
+    def test_returns_youngest_face(self):
+        faces = [{"age": 34, "face_confidence": 0.9},
+                 {"age": 12, "face_confidence": 0.9},
+                 {"age": 56, "face_confidence": 0.8}]
+        with mock.patch("sick.DeepFace.analyze", return_value=faces):
+            assert sick.detect_age("irrelevant.jpg") == 12
+
+    def test_discards_whole_image_fallback(self):
+        """face_confidence 0.0 is DeepFace's 'age of the scenery' fallback."""
+        faces = [{"age": 28, "face_confidence": 0.0}]
+        with mock.patch("sick.DeepFace.analyze", return_value=faces):
+            assert sick.detect_age("irrelevant.jpg") is None
+
+    def test_handles_string_ages(self):
+        with mock.patch("sick.DeepFace.analyze",
+                        return_value=[{"age": "29", "face_confidence": 0.9}]):
+            assert sick.detect_age("irrelevant.jpg") == 29
+
+    def test_handles_single_dict_result(self):
+        with mock.patch("sick.DeepFace.analyze",
+                        return_value={"age": 40, "face_confidence": 0.9}):
+            assert sick.detect_age("irrelevant.jpg") == 40
+
+    def test_no_faces_returns_none(self):
+        with mock.patch("sick.DeepFace.analyze", return_value=[]):
+            assert sick.detect_age("irrelevant.jpg") is None
+
+    def test_csam_screen_uses_estimated_age(self):
+        with mock.patch("sick.detect_age", return_value=14), \
+                mock.patch("sick.detect_nudity", return_value={"result": [], "score": 0.9}):
+            flagged, details = sick.detect_potential_child_exploitation("img.jpg", faces_detected=2)
+        assert flagged
+        assert "14" in details
+
+
 class TestImageHelpers:
     """Characterization tests for the pure image-analysis helpers."""
 
