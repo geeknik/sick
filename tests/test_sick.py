@@ -1073,6 +1073,42 @@ class TestExifExtraction:
         assert "GPSPosition" in row[-2]
 
 
+def small_watermark_image():
+    """Small, low-contrast text (like a watermark) on a ~92x26 image."""
+    from PIL import ImageDraw, ImageFont
+    img = Image.new("RGB", (92, 26), (225, 225, 225))
+    draw = ImageDraw.Draw(img)
+    draw.text((3, 8), "SECRET MARKER 42", fill=(140, 140, 140),
+              font=ImageFont.load_default(size=9))
+    return img
+
+
+class TestOcrExtraction:
+    """OCR preprocessing and word-confidence gating."""
+
+    def test_preprocess_upscales_small_images(self):
+        processed = sick.preprocess_for_ocr(small_watermark_image())
+        assert processed.mode == "L"
+        assert min(processed.size) >= 64          # 26 -> 78 via 3x upscale
+        big = sick.preprocess_for_ocr(Image.new("RGB", (300, 300), (10, 10, 10)))
+        assert big.size == (300, 300)             # large images untouched
+
+    def test_ocr_reads_small_low_contrast_text(self):
+        """The watermark fixture the unpreprocessed pipeline misses."""
+        text = sick.extract_text_from_image(small_watermark_image())
+        assert "SECRET" in text and "MARKER" in text
+
+    def test_ocr_confidence_gate_filters_junk(self):
+        """Only words with confidence >= 60 survive; blanks and -1 rows drop."""
+        fake_data = {
+            "text": ["GOOD", "BAD", "  ", "SKIPROW"],
+            "conf": [90, 30, 95, -1],
+        }
+        with mock.patch("sick.pytesseract.image_to_data", return_value=fake_data):
+            text = sick.extract_text_from_image(small_watermark_image())
+        assert text == "GOOD"
+
+
 class TestImageHelpers:
     """Characterization tests for the pure image-analysis helpers."""
 
