@@ -1041,6 +1041,22 @@ class TestExifExtraction:
         makernote_value = str(data.get("MakerNote", ""))
         assert "MMMM" not in makernote_value or len(makernote_value) <= 40
 
+    def test_zero_coordinates_render_without_negative_zero(self):
+        # pylint: disable=protected-access; unit-testing the decoder directly
+        decoded = sick._decode_gps({
+            1: "S", 2: ((0, 1), (0, 1), (0, 1)),
+            3: "W", 4: ((0, 1), (0, 1), (0, 1)),
+        })
+        assert decoded["GPSPosition"] == "0.000000, 0.000000"
+
+    def test_nul_padded_ref_still_recognized(self):
+        # pylint: disable=protected-access; unit-testing the decoder directly
+        decoded = sick._decode_gps({
+            1: b"N\x00", 2: ((10, 1), (0, 1), (0, 1)),
+            3: b"E\x00", 4: ((20, 1), (0, 1), (0, 1)),
+        })
+        assert decoded["GPSPosition"] == "10.000000, 20.000000"
+
     def test_row_contains_decoded_gps(self, tmp_path):
         path = jpeg_with_gps(tmp_path / "geo.jpg")
         with mock.patch("sick.initialize_nude_detector"), \

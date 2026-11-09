@@ -286,7 +286,7 @@ def _gps_ref_char(value):
     """Normalize a GPS hemisphere ref to 'N'/'S'/'E'/'W'; None if unreadable."""
     if isinstance(value, (bytes, bytearray)):
         value = value.decode('ascii', errors='replace') if value else ''
-    text = str(value).strip().upper()
+    text = str(value).strip(' \t\r\n\x00').upper()
     return text[:1] if text in ('N', 'S', 'E', 'W') else None
 
 
@@ -317,7 +317,7 @@ def _decode_gps(gps_info):
         longitude = dms_to_decimal(gps_info[4])      # GPSLongitude
         if lon_ref == 'W':
             longitude = -longitude
-        decoded['GPSPosition'] = f"{latitude:.6f}, {longitude:.6f}"
+        decoded['GPSPosition'] = f"{latitude + 0.0:.6f}, {longitude + 0.0:.6f}"
     except (KeyError, TypeError, ValueError, ZeroDivisionError, IndexError):
         return {}
 
