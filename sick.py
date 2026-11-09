@@ -683,10 +683,14 @@ DOMINANT_COLOR_MAX_SIDE = 200
 def thumbnail_for_color(pil_image, max_side=DOMINANT_COLOR_MAX_SIDE):
     """Return an RGB copy shrunk to at most *max_side* on its longest side.
 
-    Never upscales; aspect ratio preserved.  Feeding the thumbnail (not the
-    full image) to ColorThief keeps both the PNG re-encode and the
-    every-pixel k-means cheap: a 3000x2000 image takes ~10s at full
-    resolution and milliseconds at thumbnail scale.
+    Never upscales.  Aspect ratio is preserved to rounding; extreme
+    slivers (e.g. 3000x3 -> 200x1) drift because the short side clamps
+    at 1px.  Dominant color is only approximately scale-invariant: it is
+    stable for clearly-dominated palettes, but near-tie splits can flip
+    (the full-resolution answer is itself arbitrary there).  Feeding the
+    thumbnail (not the full image) to ColorThief keeps both the PNG
+    re-encode and the every-pixel k-means cheap: a 3000x2000 image takes
+    ~10s at full resolution and milliseconds at thumbnail scale.
     """
     img = pil_image.convert('RGB')
     scale = max_side / max(img.size)

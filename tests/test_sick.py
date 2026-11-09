@@ -1347,16 +1347,32 @@ class TestDominantColor:
         assert sick.thumbnail_for_color(small).size == (80, 60)  # never upscaled
 
     def test_dominant_color_of_two_tone_image(self, tmp_path):
-        """Half red / half blue must yield one of the two actual tones."""
-        img = Image.new("RGB", (100, 100), (220, 10, 10))
-        for y in range(50):
-            for x in range(100):
-                img.putpixel((x, y), (10, 10, 220))
+        """Half red / half blue must yield one of the two actual tones.
+
+        Built at 2000x1000 so the LANCZOS downscale path (and its blend
+        seam) is actually exercised.
+        """
+        img = Image.new("RGB", (2000, 1000), (220, 10, 10))
+        top = Image.new("RGB", (2000, 500), (10, 10, 220))
+        img.paste(top, (0, 0))
         path = tmp_path / "twotone.png"
         img.save(path)
         red, green, blue = sick.get_dominant_color(str(path))
         assert red > 150 and blue < 100 or blue > 150 and red < 100
         assert green < 100
+
+    def test_thumbnail_degenerate_dimensions(self):
+        assert sick.thumbnail_for_color(Image.new("RGB", (1, 1))).size == (1, 1)
+        assert sick.thumbnail_for_color(Image.new("RGB", (3000, 1))).size == (200, 1)
+        assert sick.thumbnail_for_color(Image.new("RGB", (1, 3000))).size == (1, 200)
+
+    def test_thumbnail_accepts_all_modes(self):
+        for mode, factory in [("P", lambda: Image.new("P", (3000, 2000))),
+                              ("LA", lambda: Image.new("LA", (3000, 2000))),
+                              ("RGBA", lambda: Image.new("RGBA", (3000, 2000)))]:
+            thumb = sick.thumbnail_for_color(factory())
+            assert thumb.mode == "RGB", mode
+            assert max(thumb.size) <= 200
 
 
 class TestImageHelpers:
