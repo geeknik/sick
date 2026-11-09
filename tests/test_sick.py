@@ -633,7 +633,7 @@ class TestGifAnalysis:
         monkeypatch.setattr(sick.tempfile, "tempdir", str(tmp_path / "tmp"))
         (tmp_path / "tmp").mkdir()
         scores = iter([{"result": [], "score": 0.2},
-                       {"result": [{"class": "EXPOSED_BREAST", "score": 0.9}], "score": 0.9},
+                       {"result": [{"class": "FEMALE_BREAST_EXPOSED", "score": 0.9}], "score": 0.9},
                        {"result": [], "score": 0.1}])
         nudity = mock.MagicMock(side_effect=lambda p: next(scores))
         with mock.patch("sick.initialize_nude_detector"), \
@@ -646,7 +646,7 @@ class TestGifAnalysis:
         assert row is not None
         assert nudity.call_count == 3
         assert all(call.args[0].endswith(".png") for call in nudity.call_args_list)
-        assert "0.90" in row[4] and "EXPOSED_BREAST" in row[4]
+        assert "0.90" in row[4] and "FEMALE_BREAST_EXPOSED" in row[4]
 
     def test_gif_frames_are_cleaned_up(self, tmp_path, monkeypatch):
         gif = make_gif(tmp_path / "anim.gif", n_frames=3)

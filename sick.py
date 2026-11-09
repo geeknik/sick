@@ -184,11 +184,18 @@ NUDITY_CLASSES = frozenset({
     'ANUS_EXPOSED', 'BUTTOCKS_EXPOSED', 'FEMALE_BREAST_EXPOSED',
     'FEMALE_GENITALIA_EXPOSED', 'MALE_BREAST_EXPOSED', 'MALE_GENITALIA_EXPOSED',
 })
-NUDITY_DETECTION_THRESHOLD = 0.5
+NUDITY_DETECTION_THRESHOLD = 0.5  # precision gate: nudenet's own floor is 0.2;
+# 0.2-0.5 detections are dropped -- raise recall by lowering if triage needs it
 
 
 # Function to detect nudity in an image
 def detect_nudity(image_path):
+    """Score exposed nudity in an image.
+
+    Returns {'result': <list of detection dicts on success, a plain
+    string message on unsupported/failed paths>, 'score': <max kept
+    detection score, 0 when nothing survives the filter>}.
+    """
     try:
         # Check if the image is a GIF
         if image_path.lower().endswith('.gif'):
