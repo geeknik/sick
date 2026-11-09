@@ -227,8 +227,9 @@ def perceptual_hash(pil_image):
 
     The difference hash survives resize, recompression and moderate
     brightness/contrast edits, but NOT crops, mirrors or rotations.
-    Flat, low-detail images produce similar hashes -- treat matches on
-    such content as weak evidence.
+    Animated GIFs are hashed from their first frame.  Flat, low-detail
+    images produce similar hashes -- treat matches on such content as
+    weak evidence.
     """
     small = pil_image.convert('L').resize((9, 8))
     pixels = np.asarray(small, dtype=np.int16)
@@ -247,6 +248,11 @@ def find_or_register_duplicate(image_hash, identifier):
     The first occurrence stays canonical; duplicates are not re-registered.
     """
     with _duplicate_registry_lock:
+        # Flat images (solid colours, blank spacers) all hash to all-zeros
+        # or all-ones; that carries no structure and must never read as a
+        # 'near-duplicate' match.
+        if image_hash in ('0' * 16, 'f' * 16):
+            return None
         for existing_hash, existing_id in _duplicate_registry.items():
             distance = hamming_distance(image_hash, existing_hash)
             if distance <= PERCEPTUAL_HASH_DUPLICATE_THRESHOLD:
@@ -922,6 +928,7 @@ def crawl(url, depth, max_pages=100):
     redirect target's own pages, via open redirects -- are never followed.
     One failing image cannot abort a page's results.
     """
+    reset_duplicate_registry()
     start_url = url.split('#', 1)[0]
     visited = set()
     seen_images = set()
@@ -991,6 +998,7 @@ def crawl(url, depth, max_pages=100):
     return results
 
 def process_local_folder(folder_path):
+    reset_duplicate_registry()
     image_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'}
     results = []
     files = [f for f in Path(folder_path).rglob('*') if f.suffix.lower() in image_extensions]

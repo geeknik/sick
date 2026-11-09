@@ -916,6 +916,33 @@ class TestPerceptualHash:
         assert "near-duplicate" not in second[-1]
 
 
+    def test_solid_images_not_flagged_as_duplicates(self, tmp_path):
+        """Flat images hash identically; that must not read as 'duplicate'."""
+        red = self._process(tmp_path, Image.new("RGB", (32, 32), (255, 0, 0)), "red.png")
+        blue = self._process(tmp_path, Image.new("RGB", (48, 48), (0, 0, 255)), "blue.png")
+        assert red is not None and blue is not None
+        assert "near-duplicate" not in red[-1]
+        assert "near-duplicate" not in blue[-1]
+
+    def test_scan_entry_points_reset_registry(self, tmp_path):
+        """crawl() and process_local_folder() start from a fresh registry."""
+        poster_hash = sick.perceptual_hash(make_poster())
+        sick.find_or_register_duplicate(poster_hash, "stale-entry")
+        folder = tmp_path / "images"
+        folder.mkdir()
+        pages = {"http://site.test/a": "<html></html>"}
+        get = fake_requests_get(pages)
+        with mock.patch("sick.requests.get", get), \
+                mock.patch("sick.process_image", return_value=None):
+            sick.crawl("http://site.test/a", depth=1)
+        # without a reset the stale entry would match at distance 0
+        assert sick.find_or_register_duplicate(poster_hash, "probe") is None
+        sick.find_or_register_duplicate(poster_hash, "stale-again")
+        with mock.patch("sick.process_image", return_value=None):
+            sick.process_local_folder(str(folder))
+        assert sick.find_or_register_duplicate(poster_hash, "probe2") is None
+
+
 class TestImageHelpers:
     """Characterization tests for the pure image-analysis helpers."""
 
